@@ -1,4 +1,4 @@
-# 📌 산돌이 Backend Repository Template  
+# 📌 산돌이 학식 서비스 API
 
 ## 📂 프로젝트 개요  
 한국공학대학교 학식 및 교내외 업체들의 메뉴를 등록 및 제공하는 API 서버입니다.
