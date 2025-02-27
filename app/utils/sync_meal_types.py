@@ -1,3 +1,4 @@
+"""DB의 meal_type 테이블을 meal_types.json과 동기화"""
 import traceback
 
 from sqlalchemy.orm import Session
