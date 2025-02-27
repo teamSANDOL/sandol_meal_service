@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Literal
 import pytz
 from pydantic import BaseModel, GetCoreSchemaHandler
@@ -41,13 +42,19 @@ class Timestamp:
         else:
             raise TypeError(f"Expected str or datetime, got {type(value)}")
 
+class MealType(str, Enum):
+    """식사 종류"""
+    breakfast = "breakfast"
+    brunch = "brunch"
+    lunch = "lunch"
+    dinner = "dinner"
 
 class BaseMeal(BaseModel):
     """공통 Meal 모델"""
     id: int
     menu: list[str]
     registered_at: Timestamp
-    meal_type: Literal["breakfast", "brunch", "lunch", "dinner"]
+    meal_type: MealType
 
 
 class MealResponse(BaseMeal):
@@ -71,12 +78,12 @@ class MealRegisterResponse(BaseModel):
     """식사 등록 응답"""
     id: str
     restaurant_id: str
-    meal_type: Literal["breakfast", "brunch", "lunch", "dinner"]
+    meal_type: MealType
     registered_at: Timestamp
 
 class MealEditResponse(BaseModel):
     """식사 수정 응답"""
     id: str
     restaurant_id: str
-    meal_type: Literal["breakfast", "brunch", "lunch", "dinner"]
+    meal_type: MealType
     menu: list[str]
