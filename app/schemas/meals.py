@@ -1,38 +1,45 @@
 from datetime import datetime
 from typing import Literal
 import pytz
-from pydantic import BaseModel
+from pydantic import BaseModel, GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 # 서울 시간대 설정
 SEOUL_TZ = pytz.timezone("Asia/Seoul")
 
 
 class Timestamp:
-    """str | datetime 을 자동 변환하는 커스텀 타입"""
+    """KST(서울 시간)으로 자동 변환되는 datetime 필드"""
 
-    def __init__(self, value: str | datetime):
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler: GetCoreSchemaHandler):
+        """Pydantic이 사용할 스키마를 정의"""
+        return core_schema.no_info_after_validator_function(cls.convert_to_kst, handler.generate_schema(datetime))
+
+    @classmethod
+    def convert_to_kst(cls, value: str | datetime) -> datetime:
+        """ISO 8601 문자열 또는 datetime을 받아 KST 변환"""
         if isinstance(value, str):
             try:
-                self.value = datetime.fromisoformat(value).astimezone(
-                    SEOUL_TZ
-                )  # ISO 검증 + 서울 시간 변환
+                dt = datetime.fromisoformat(value)
+                if dt.tzinfo is None:
+                    # ✅ 타임존이 없는 경우, 기본적으로 KST로 간주
+                    dt = dt.replace(tzinfo=SEOUL_TZ)
+                else:
+                    # ✅ 타임존이 있는 경우, KST로 변환
+                    dt = dt.astimezone(SEOUL_TZ)
+                return dt
             except ValueError as err:
                 raise ValueError(f"Invalid ISO 8601 format: {value}") from err
+
         elif isinstance(value, datetime):
-            self.value = value.astimezone(SEOUL_TZ)  # datetime이면 서울 시간 변환
+            if value.tzinfo is None:
+                # ✅ datetime 객체에 타임존이 없으면 KST로 간주
+                return value.replace(tzinfo=SEOUL_TZ)
+            else:
+                return value.astimezone(SEOUL_TZ)
         else:
             raise TypeError(f"Expected str or datetime, got {type(value)}")
-
-    def __str__(self):
-        """Pydantic이 자동 호출하는 ISO 8601 형식 문자열"""
-        return self.value.isoformat()
-
-    def __repr__(self):
-        return f"CustomDateTime({self.value.isoformat()})"
-
-    def to_datetime(self):
-        """datetime 객체 반환"""
-        return self.value
 
 
 class BaseMeal(BaseModel):
