@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, Text, TIMESTAMP, JSON, ForeignKey, Index, CheckConstraint, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, Text, TIMESTAMP, JSON, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from sqlalchemy.sql import func
@@ -33,5 +33,6 @@ class Meal(Base):
     __table_args__ = (
         Index("meal_restaurant_id_index", "restaurant_id"),
     )
+
 
 

@@ -1,4 +1,13 @@
-from sqlalchemy import Column, BigInteger, Text, Float, TIMESTAMP, ForeignKey, Index, CheckConstraint
+from sqlalchemy import (
+    Column,
+    BigInteger,
+    Text,
+    Float,
+    TIMESTAMP,
+    ForeignKey,
+    Index,
+    CheckConstraint,
+)
 from sqlalchemy.orm import relationship
 from app.models.associations import restaurant_manager_association
 from app.database import Base
@@ -13,27 +22,37 @@ class Restaurant(Base):
     name = Column(Text, nullable=False)
     owner = Column(BigInteger, ForeignKey("User.id"), nullable=False)
     location_type = Column(Text, nullable=False)
-    operating_hours_id = Column(BigInteger, ForeignKey("operating_hours.id"), nullable=True)
+    
     building_name = Column(Text, nullable=True)
     naver_map_link = Column(Text, nullable=True)
     kakao_map_link = Column(Text, nullable=True)
     latitude = Column(Float(53), nullable=True)
     longitude = Column(Float(53), nullable=True)
 
-    # 관계 설정
     owner_user = relationship("User", foreign_keys=[owner])
+
+    # ✅ managers 관계 추가 (다대다 관계 설정)
     managers = relationship(
         "User",
         secondary=restaurant_manager_association,
-        back_populates="managed_restaurants",
+        back_populates="managed_restaurants"
     )
-    operating_hours_obj = relationship("OperatingHours", back_populates="restaurant")
+
+    # ✅ 1:N 관계 유지
+    operating_hours = relationship(
+        "OperatingHours",
+        back_populates="restaurant",
+        foreign_keys="[OperatingHours.restaurant_id]",
+        cascade="all, delete-orphan"
+    )
+
     meals = relationship("Meal", back_populates="restaurant")
 
     __table_args__ = (
         Index("restaurant_name_index", "name"),
         Index("restaurant_owner_index", "owner"),
     )
+
 
 
 class RestaurantSubmission(Base):
@@ -49,7 +68,7 @@ class RestaurantSubmission(Base):
     approver = Column(BigInteger, nullable=True)
     approved_time = Column(TIMESTAMP, nullable=True)
     location_type = Column(Text, nullable=False)
-    operating_hours_id = Column(BigInteger, ForeignKey("operating_hours.id"), nullable=True)
+
     building_name = Column(Text, nullable=True)
     naver_map_link = Column(Text, nullable=True)
     kakao_map_link = Column(Text, nullable=True)
@@ -57,8 +76,13 @@ class RestaurantSubmission(Base):
     longitude = Column(Float(53), nullable=True)
 
     submitter_user = relationship("User", foreign_keys=[submitter])
-    operating_hours_obj = relationship(
-        "OperatingHours", back_populates="restaurant_submission"
+
+    # ✅ 여러 개의 OperatingHours가 연결될 수 있도록 수정
+    operating_hours = relationship(
+        "OperatingHours",
+        back_populates="restaurant_submission",
+        foreign_keys="[OperatingHours.submission_id]",
+        cascade="all, delete-orphan"
     )
 
     __table_args__ = (
@@ -78,22 +102,32 @@ class OperatingHours(Base):
     start_time = Column(Text, nullable=False)
     end_time = Column(Text, nullable=False)
 
+    # ✅ Restaurant와 1:N 관계
     restaurant_id = Column(BigInteger, ForeignKey("Restaurant.id"), nullable=True)
+
+    # ✅ RestaurantSubmission과 1:N 관계
     submission_id = Column(BigInteger, ForeignKey("Restaurant_submission.id"), nullable=True)
 
-    # CHECK 제약 조건 추가 (restaurant_id 또는 submission_id 중 하나만 존재해야 함)
+    # ✅ 1:N 관계 명확하게 지정
+    restaurant = relationship(
+        "Restaurant",
+        back_populates="operating_hours",
+        foreign_keys=[restaurant_id]
+    )
+
+    restaurant_submission = relationship(
+        "RestaurantSubmission",
+        back_populates="operating_hours",
+        foreign_keys=[submission_id]
+    )
+
+    # ✅ CHECK 제약 조건 추가 (restaurant_id 또는 submission_id 중 하나만 존재해야 함)
     __table_args__ = (
         CheckConstraint(
             "(restaurant_id IS NOT NULL AND submission_id IS NULL) OR "
             "(restaurant_id IS NULL AND submission_id IS NOT NULL)",
-            name="check_one_foreign_key_not_null"
+            name="check_one_foreign_key_not_null",
         ),
-    )
-
-    # 관계 설정
-    restaurant = relationship("Restaurant", back_populates="operating_hours_obj")
-    restaurant_submission = relationship(
-        "RestaurantSubmission", back_populates="operating_hours_obj"
     )
 
 
