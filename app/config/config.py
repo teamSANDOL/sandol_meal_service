@@ -36,14 +36,12 @@ logger.addHandler(console_handler)
 
 class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
-
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./meal_service.db")
-    DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
     @staticmethod
     def get_meal_types_file():
         """meal_types.json 파일 경로 반환"""
-        return os.path.join(CONFIG_DIR, "meal_types.json")
+        return os.path.join(CONFIG_DIR, os.getenv("MEAL_TYPES_FILE_NAME", "meal_types.json"))
 
     @staticmethod
     def load_meal_types():

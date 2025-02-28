@@ -6,7 +6,7 @@ from fastapi import FastAPI
 import uvicorn
 
 from app.config.config import logger
-from app.routers.meals import meals_router, restaurants_router
+from app.routers import meals_router, restaurants_router
 from app.utils.sync_meal_types import sync_meal_types
 from app.database import init_db
 
