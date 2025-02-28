@@ -2,13 +2,16 @@ from typing import Optional, Dict, Literal
 from pydantic import BaseModel, Field
 from enum import Enum
 
+
 class TimeRange(BaseModel):
     start: str  # "HH:MM" 형식
     end: str  # "HH:MM" 형식
 
+
 class LocationType(str, Enum):
     CAMPUS = "campus"
     OFF_CAMPUS = "off_campus"
+
 
 class Location(BaseModel):
     type: LocationType  # "campus" 또는 "off_campus"
@@ -16,6 +19,7 @@ class Location(BaseModel):
     map_links: Optional[Dict[str, str]] = None  # 네이버, 카카오 지도 링크
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+
 
 class Restaurant(BaseModel):
     id: int

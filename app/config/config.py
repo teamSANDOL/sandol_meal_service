@@ -15,7 +15,8 @@ logger = logging.getLogger("sandol_meal_service")
 logger.setLevel(logging.DEBUG)  # 모든 로그 기록
 
 # 핸들러 1: 파일에 모든 로그 저장 (디버깅용)
-file_handler = logging.FileHandler(os.path.join(CONFIG_DIR, "app.log"), encoding="utf-8")
+file_handler = logging.FileHandler(
+    os.path.join(CONFIG_DIR, "app.log"), encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)  # DEBUG 이상 저장
 file_formatter = logging.Formatter(
     "%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
@@ -33,6 +34,7 @@ console_handler.setFormatter(console_formatter)
 # 로거에 핸들러 추가
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+
 
 class Config:
     """FastAPI 설정 값을 관리하는 클래스"""

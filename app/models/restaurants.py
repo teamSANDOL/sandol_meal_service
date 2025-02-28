@@ -22,7 +22,7 @@ class Restaurant(Base):
     name = Column(Text, nullable=False)
     owner = Column(BigInteger, ForeignKey("User.id"), nullable=False)
     location_type = Column(Text, nullable=False)
-    
+
     building_name = Column(Text, nullable=True)
     naver_map_link = Column(Text, nullable=True)
     kakao_map_link = Column(Text, nullable=True)
@@ -52,7 +52,6 @@ class Restaurant(Base):
         Index("restaurant_name_index", "name"),
         Index("restaurant_owner_index", "owner"),
     )
-
 
 
 class RestaurantSubmission(Base):
@@ -103,10 +102,12 @@ class OperatingHours(Base):
     end_time = Column(Text, nullable=False)
 
     # ✅ Restaurant와 1:N 관계
-    restaurant_id = Column(BigInteger, ForeignKey("Restaurant.id"), nullable=True)
+    restaurant_id = Column(BigInteger, ForeignKey(
+        "Restaurant.id"), nullable=True)
 
     # ✅ RestaurantSubmission과 1:N 관계
-    submission_id = Column(BigInteger, ForeignKey("Restaurant_submission.id"), nullable=True)
+    submission_id = Column(BigInteger, ForeignKey(
+        "Restaurant_submission.id"), nullable=True)
 
     # ✅ 1:N 관계 명확하게 지정
     restaurant = relationship(

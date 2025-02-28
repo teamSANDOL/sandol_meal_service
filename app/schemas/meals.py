@@ -42,12 +42,14 @@ class Timestamp:
         else:
             raise TypeError(f"Expected str or datetime, got {type(value)}")
 
+
 class MealType(str, Enum):
     """식사 종류"""
     breakfast = "breakfast"
     brunch = "brunch"
     lunch = "lunch"
     dinner = "dinner"
+
 
 class BaseMeal(BaseModel):
     """공통 Meal 모델"""
@@ -80,6 +82,7 @@ class MealRegisterResponse(BaseModel):
     restaurant_id: str
     meal_type: MealType
     registered_at: Timestamp
+
 
 class MealEditResponse(BaseModel):
     """식사 수정 응답"""

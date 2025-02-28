@@ -6,6 +6,7 @@ from app.database import Base
 restaurant_manager_association = Table(
     "RestaurantManager",
     Base.metadata,
-    Column("restaurant_id", BigInteger, ForeignKey("Restaurant.id"), primary_key=True),
+    Column("restaurant_id", BigInteger, ForeignKey(
+        "Restaurant.id"), primary_key=True),
     Column("user_id", BigInteger, ForeignKey("User.id"), primary_key=True),
 )

@@ -8,6 +8,7 @@ from app.database import SessionLocal
 from app.models.meals import MealType
 from app.config import Config, logger
 
+
 def sync_meal_types():
     """DB의 meal_type 테이블을 meal_types.json과 동기화"""
     db: Session = SessionLocal()
@@ -19,7 +20,8 @@ def sync_meal_types():
         logger.debug("기존 meal_type: %s", existing_meal_types)
 
         # 추가해야 할 meal_type 찾기
-        new_meal_types = [MealType(name=mt) for mt in meal_types if mt not in existing_meal_types]
+        new_meal_types = [MealType(name=mt)
+                          for mt in meal_types if mt not in existing_meal_types]
         logger.debug("새로 추가할 meal_type: %s", new_meal_types)
 
         if new_meal_types:

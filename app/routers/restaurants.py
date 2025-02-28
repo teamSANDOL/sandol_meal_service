@@ -3,4 +3,3 @@ from typing import List
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/restaurants")
-

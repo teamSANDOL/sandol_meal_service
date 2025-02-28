@@ -11,10 +11,12 @@ from app.schemas.pagination import CustomPage
 
 router = APIRouter()
 
+
 @router.get("/meals", response_model=CustomPage[MealResponse])
 def list_meals(db: Session = Depends(get_db), params: Params = Depends()):
     """모든 식사 데이터를 반환합니다."""
     page_data = paginate(db.query(Meal), params=params)  # 자동 페이징
     return page_data
+
 
 add_pagination(router)

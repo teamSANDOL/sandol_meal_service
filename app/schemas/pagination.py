@@ -6,12 +6,14 @@ from typing import Generic, List, Optional, TypeVar
 
 T = TypeVar("T")
 
+
 class MetaData(BaseModel):
     page: int
     size: int
     total: int
     has_next: bool
     has_prev: bool
+
 
 class CustomPage(AbstractPage[T], Generic[T]):
     status: str = "success"
