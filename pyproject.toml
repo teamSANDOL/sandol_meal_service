@@ -16,6 +16,7 @@ openpyxl = "^3.1"
 httpx = "^0.28"
 fastapi-pagination = "^0.12.34"
 python-dotenv = "^1.0.1"
+aiosqlite = "^0.21.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.9"
