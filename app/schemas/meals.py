@@ -1,12 +1,9 @@
 from datetime import datetime
 from enum import Enum
-from typing import Literal
-import pytz
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import core_schema
 
-# 서울 시간대 설정
-SEOUL_TZ = pytz.timezone("Asia/Seoul")
+from app.config import Config
 
 
 class Timestamp:
@@ -15,7 +12,9 @@ class Timestamp:
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type, handler: GetCoreSchemaHandler):
         """Pydantic이 사용할 스키마를 정의"""
-        return core_schema.no_info_after_validator_function(cls.convert_to_kst, handler.generate_schema(datetime))
+        return core_schema.no_info_after_validator_function(
+            cls.convert_to_kst, handler.generate_schema(datetime)
+        )
 
     @classmethod
     def convert_to_kst(cls, value: str | datetime) -> datetime:
@@ -25,10 +24,10 @@ class Timestamp:
                 dt = datetime.fromisoformat(value)
                 if dt.tzinfo is None:
                     # ✅ 타임존이 없는 경우, 기본적으로 KST로 간주
-                    dt = dt.replace(tzinfo=SEOUL_TZ)
+                    dt = dt.replace(tzinfo=Config.TZ)
                 else:
                     # ✅ 타임존이 있는 경우, KST로 변환
-                    dt = dt.astimezone(SEOUL_TZ)
+                    dt = dt.astimezone(Config.TZ)
                 return dt
             except ValueError as err:
                 raise ValueError(f"Invalid ISO 8601 format: {value}") from err
@@ -36,15 +35,16 @@ class Timestamp:
         elif isinstance(value, datetime):
             if value.tzinfo is None:
                 # ✅ datetime 객체에 타임존이 없으면 KST로 간주
-                return value.replace(tzinfo=SEOUL_TZ)
+                return value.replace(tzinfo=Config.TZ)
             else:
-                return value.astimezone(SEOUL_TZ)
+                return value.astimezone(Config.TZ)
         else:
             raise TypeError(f"Expected str or datetime, got {type(value)}")
 
 
 class MealType(str, Enum):
     """식사 종류"""
+
     breakfast = "breakfast"
     brunch = "brunch"
     lunch = "lunch"
@@ -53,6 +53,7 @@ class MealType(str, Enum):
 
 class BaseMeal(BaseModel):
     """공통 Meal 모델"""
+
     id: int
     menu: list[str]
     registered_at: Timestamp
@@ -61,6 +62,7 @@ class BaseMeal(BaseModel):
 
 class MealResponse(BaseMeal):
     """개별 식사 응답 모델"""
+
     restaurant_id: int
     restaurant_name: str
 
@@ -71,6 +73,7 @@ class RestaurantMeal(BaseMeal):
 
 class RestaurantMealResponse(BaseModel):
     """식당 내 모든 식사 정보를 포함하는 응답"""
+
     id: int
     name: str
     meals: list[RestaurantMeal]
@@ -78,6 +81,7 @@ class RestaurantMealResponse(BaseModel):
 
 class MealRegisterResponse(BaseModel):
     """식사 등록 응답"""
+
     id: str
     restaurant_id: str
     meal_type: MealType
@@ -86,6 +90,7 @@ class MealRegisterResponse(BaseModel):
 
 class MealEditResponse(BaseModel):
     """식사 수정 응답"""
+
     id: str
     restaurant_id: str
     meal_type: MealType
