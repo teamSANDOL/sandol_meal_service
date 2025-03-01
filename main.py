@@ -17,10 +17,10 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 서비스 시작: 데이터베이스 초기화 및 meal_types 동기화")
 
     # 애플리케이션 시작 시 데이터베이스 테이블 생성
-    init_db()
+    await init_db()
 
     # 서버 시작 시 meal_type 동기화 실행
-    sync_meal_types()
+    await sync_meal_types()
 
     yield  # FastAPI가 실행 중인 동안 유지됨
 

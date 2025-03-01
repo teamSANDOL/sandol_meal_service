@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-import time
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from fastapi_pagination import Params, add_pagination
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -13,10 +13,9 @@ router = APIRouter()
 
 
 @router.get("/meals", response_model=CustomPage[MealResponse])
-def list_meals(db: Session = Depends(get_db), params: Params = Depends()):
+async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depends()):
     """모든 식사 데이터를 반환합니다."""
-    page_data = paginate(db.query(Meal), params=params)  # 자동 페이징
-    return page_data
+    return await paginate(db, select(Meal), params=params)  # 비동기 페이징
 
 
 add_pagination(router)

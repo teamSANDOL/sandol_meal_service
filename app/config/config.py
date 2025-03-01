@@ -38,7 +38,12 @@ logger.addHandler(console_handler)
 
 class Config:
     """FastAPI 설정 값을 관리하는 클래스"""
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./meal_service.db")
+    debug = os.getenv("DEBUG", "False").lower() == "true"
+
+    USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user_service:8000")
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./meal_service.db")
+    TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
+    TZ = timezone(TIMEZONE)
 
     @staticmethod
     def get_meal_types_file():
