@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
-from app.config.config import logger
+from app.config import logger, Config
 from app.routers import meals_router, restaurants_router
 from app.utils.sync_meal_types import sync_meal_types
 from app.database import init_db
@@ -15,6 +15,15 @@ from app.database import init_db
 async def lifespan(app: FastAPI):
     """FastAPI의 lifespan 이벤트 핸들러"""
     logger.info("🚀 서비스 시작: 데이터베이스 초기화 및 meal_types 동기화")
+    logger.debug(
+        "Cofing 정보 로드 %s",
+        {
+            "dubug": Config.debug,
+            "timezone": Config.TIMEZONE,
+            "database_url": Config.DATABASE_URL,
+            "user_service_url": Config.USER_SERVICE_URL,
+        },
+    )
 
     # 애플리케이션 시작 시 데이터베이스 테이블 생성
     await init_db()
@@ -46,6 +55,5 @@ async def root():
 if __name__ == "__main__":
     HOST = "0.0.0.0"
     PORT = 5600
-
     logger.info("Starting Sandol server on %s:%s", HOST, PORT)
     uvicorn.run("main:app", host=HOST, port=PORT, reload=True)
