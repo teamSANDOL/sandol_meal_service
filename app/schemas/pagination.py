@@ -1,8 +1,8 @@
-import time
+from typing import Generic, List, TypeVar
+
 from fastapi_pagination import Params
 from fastapi_pagination.bases import AbstractPage
 from pydantic import BaseModel
-from typing import Generic, List, Optional, TypeVar
 
 T = TypeVar("T")
 
