@@ -1,6 +1,14 @@
-from sqlalchemy import Column, Integer, BigInteger, Text, TIMESTAMP, JSON, ForeignKey, Index
+from sqlalchemy import (
+    Column,
+    Integer,
+    BigInteger,
+    Text,
+    TIMESTAMP,
+    JSON,
+    ForeignKey,
+    Index,
+)
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -22,11 +30,9 @@ class Meal(Base):
     __tablename__ = "Meal"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    restaurant_id = Column(BigInteger, ForeignKey(
-        "Restaurant.id"), nullable=False)
+    restaurant_id = Column(BigInteger, ForeignKey("Restaurant.id"), nullable=False)
     menu = Column(JSON, nullable=False, default={})
-    registered_at = Column(TIMESTAMP, nullable=False,
-                           server_default=func.now())
+    registered_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
 
     meal_type_id = Column(Integer, ForeignKey("meal_type.id"), nullable=False)
 
@@ -34,6 +40,4 @@ class Meal(Base):
     restaurant = relationship("Restaurant", back_populates="meals")
     meal_type = relationship("MealType")
 
-    __table_args__ = (
-        Index("meal_restaurant_id_index", "restaurant_id"),
-    )
+    __table_args__ = (Index("meal_restaurant_id_index", "restaurant_id"),)

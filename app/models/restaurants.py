@@ -1,5 +1,6 @@
 from sqlalchemy import (
     Column,
+    Integer,
     BigInteger,
     Text,
     Float,
@@ -18,9 +19,9 @@ class Restaurant(Base):
 
     __tablename__ = "Restaurant"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(Text, nullable=False)
-    owner = Column(BigInteger, ForeignKey("User.id"), nullable=False)
+    owner = Column(Integer, ForeignKey("User.id"), nullable=False)
     location_type = Column(Text, nullable=False)
 
     building_name = Column(Text, nullable=True)
@@ -35,7 +36,7 @@ class Restaurant(Base):
     managers = relationship(
         "User",
         secondary=restaurant_manager_association,
-        back_populates="managed_restaurants"
+        back_populates="managed_restaurants",
     )
 
     # ✅ 1:N 관계 유지
@@ -43,7 +44,7 @@ class Restaurant(Base):
         "OperatingHours",
         back_populates="restaurant",
         foreign_keys="[OperatingHours.restaurant_id]",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
     meals = relationship("Meal", back_populates="restaurant")
@@ -59,12 +60,12 @@ class RestaurantSubmission(Base):
 
     __tablename__ = "Restaurant_submission"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(Text, nullable=False)
     status = Column(Text, nullable=False)
-    submitter = Column(BigInteger, ForeignKey("User.id"), nullable=False)
+    submitter = Column(Integer, ForeignKey("User.id"), nullable=False)
     submitted_time = Column(TIMESTAMP, nullable=False)
-    approver = Column(BigInteger, nullable=True)
+    approver = Column(Integer, nullable=True)
     approved_time = Column(TIMESTAMP, nullable=True)
     location_type = Column(Text, nullable=False)
 
@@ -81,7 +82,7 @@ class RestaurantSubmission(Base):
         "OperatingHours",
         back_populates="restaurant_submission",
         foreign_keys="[OperatingHours.submission_id]",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -96,30 +97,28 @@ class OperatingHours(Base):
 
     __tablename__ = "operating_hours"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     type = Column(Text, nullable=False)
     start_time = Column(Text, nullable=False)
     end_time = Column(Text, nullable=False)
 
     # ✅ Restaurant와 1:N 관계
-    restaurant_id = Column(BigInteger, ForeignKey(
-        "Restaurant.id"), nullable=True)
+    restaurant_id = Column(Integer, ForeignKey("Restaurant.id"), nullable=True)
 
     # ✅ RestaurantSubmission과 1:N 관계
-    submission_id = Column(BigInteger, ForeignKey(
-        "Restaurant_submission.id"), nullable=True)
+    submission_id = Column(
+        Integer, ForeignKey("Restaurant_submission.id"), nullable=True
+    )
 
     # ✅ 1:N 관계 명확하게 지정
     restaurant = relationship(
-        "Restaurant",
-        back_populates="operating_hours",
-        foreign_keys=[restaurant_id]
+        "Restaurant", back_populates="operating_hours", foreign_keys=[restaurant_id]
     )
 
     restaurant_submission = relationship(
         "RestaurantSubmission",
         back_populates="operating_hours",
-        foreign_keys=[submission_id]
+        foreign_keys=[submission_id],
     )
 
     # ✅ CHECK 제약 조건 추가 (restaurant_id 또는 submission_id 중 하나만 존재해야 함)
@@ -137,7 +136,7 @@ class User(Base):
 
     __tablename__ = "User"
 
-    id = Column(BigInteger, primary_key=True)
+    id = Column(Integer, primary_key=True)
 
     owned_restaurants = relationship("Restaurant", back_populates="owner_user")
     managed_restaurants = relationship(
