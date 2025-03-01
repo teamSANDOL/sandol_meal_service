@@ -1,17 +1,22 @@
+from __future__ import annotations
+from typing import List, Optional
+from datetime import datetime
+
 from sqlalchemy import (
-    Column,
-    Integer,
     BigInteger,
-    Text,
+    CheckConstraint,
+    Column,
     Float,
-    TIMESTAMP,
     ForeignKey,
     Index,
-    CheckConstraint,
+    Integer,
+    Text,
+    TIMESTAMP,
 )
-from sqlalchemy.orm import relationship
-from app.models.associations import restaurant_manager_association
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database import Base
+from app.models.associations import restaurant_manager_association
 
 
 class Restaurant(Base):
@@ -19,35 +24,35 @@ class Restaurant(Base):
 
     __tablename__ = "Restaurant"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(Text, nullable=False)
-    owner = Column(Integer, ForeignKey("User.id"), nullable=False)
-    location_type = Column(Text, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[int] = mapped_column(Integer, ForeignKey("User.id"), nullable=False)
+    location_type: Mapped[str] = mapped_column(Text, nullable=False)
 
-    building_name = Column(Text, nullable=True)
-    naver_map_link = Column(Text, nullable=True)
-    kakao_map_link = Column(Text, nullable=True)
-    latitude = Column(Float(53), nullable=True)
-    longitude = Column(Float(53), nullable=True)
+    building_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    naver_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    kakao_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
 
-    owner_user = relationship("User", foreign_keys=[owner])
+    owner_user: Mapped["User"] = relationship("User", foreign_keys=[owner])
 
     # ✅ managers 관계 추가 (다대다 관계 설정)
-    managers = relationship(
+    managers: Mapped[List["User"]] = relationship(
         "User",
         secondary=restaurant_manager_association,
         back_populates="managed_restaurants",
     )
 
     # ✅ 1:N 관계 유지
-    operating_hours = relationship(
+    operating_hours: Mapped[List["OperatingHours"]] = relationship(
         "OperatingHours",
         back_populates="restaurant",
         foreign_keys="[OperatingHours.restaurant_id]",
         cascade="all, delete-orphan",
     )
 
-    meals = relationship("Meal", back_populates="restaurant")
+    meals: Mapped[List["Meal"]] = relationship("Meal", back_populates="restaurant")
 
     __table_args__ = (
         Index("restaurant_name_index", "name"),
@@ -60,25 +65,25 @@ class RestaurantSubmission(Base):
 
     __tablename__ = "Restaurant_submission"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(Text, nullable=False)
-    status = Column(Text, nullable=False)
-    submitter = Column(Integer, ForeignKey("User.id"), nullable=False)
-    submitted_time = Column(TIMESTAMP, nullable=False)
-    approver = Column(Integer, nullable=True)
-    approved_time = Column(TIMESTAMP, nullable=True)
-    location_type = Column(Text, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    submitter: Mapped[int] = mapped_column(Integer, ForeignKey("User.id"), nullable=False)
+    submitted_time: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    approver: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    approved_time: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    location_type: Mapped[str] = mapped_column(Text, nullable=False)
 
-    building_name = Column(Text, nullable=True)
-    naver_map_link = Column(Text, nullable=True)
-    kakao_map_link = Column(Text, nullable=True)
-    latitude = Column(Float(53), nullable=True)
-    longitude = Column(Float(53), nullable=True)
+    building_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    naver_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    kakao_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
 
-    submitter_user = relationship("User", foreign_keys=[submitter])
+    submitter_user: Mapped["User"] = relationship("User", foreign_keys=[submitter])
 
     # ✅ 여러 개의 OperatingHours가 연결될 수 있도록 수정
-    operating_hours = relationship(
+    operating_hours: Mapped[List["OperatingHours"]] = relationship(
         "OperatingHours",
         back_populates="restaurant_submission",
         foreign_keys="[OperatingHours.submission_id]",
@@ -97,25 +102,25 @@ class OperatingHours(Base):
 
     __tablename__ = "operating_hours"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    type = Column(Text, nullable=False)
-    start_time = Column(Text, nullable=False)
-    end_time = Column(Text, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    start_time: Mapped[str] = mapped_column(Text, nullable=False)
+    end_time: Mapped[str] = mapped_column(Text, nullable=False)
 
     # ✅ Restaurant와 1:N 관계
-    restaurant_id = Column(Integer, ForeignKey("Restaurant.id"), nullable=True)
+    restaurant_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("Restaurant.id"), nullable=True)
 
     # ✅ RestaurantSubmission과 1:N 관계
-    submission_id = Column(
+    submission_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("Restaurant_submission.id"), nullable=True
     )
 
     # ✅ 1:N 관계 명확하게 지정
-    restaurant = relationship(
+    restaurant: Mapped["Restaurant"] = relationship(
         "Restaurant", back_populates="operating_hours", foreign_keys=[restaurant_id]
     )
 
-    restaurant_submission = relationship(
+    restaurant_submission: Mapped["RestaurantSubmission"] = relationship(
         "RestaurantSubmission",
         back_populates="operating_hours",
         foreign_keys=[submission_id],
@@ -136,14 +141,14 @@ class User(Base):
 
     __tablename__ = "User"
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    owned_restaurants = relationship("Restaurant", back_populates="owner_user")
-    managed_restaurants = relationship(
+    owned_restaurants: Mapped[List["Restaurant"]] = relationship("Restaurant", back_populates="owner_user")
+    managed_restaurants: Mapped[List["Restaurant"]] = relationship(
         "Restaurant",
         secondary=restaurant_manager_association,
         back_populates="managers",
     )
-    submitted_restaurants = relationship(
+    submitted_restaurants: Mapped[List["RestaurantSubmission"]] = relationship(
         "RestaurantSubmission", back_populates="submitter_user"
     )
