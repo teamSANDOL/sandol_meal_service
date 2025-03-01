@@ -151,3 +151,89 @@ async def restaurant_submit_delete(
 
     await db.delete(submission)
     await db.commit()
+    logger.info("Submission with id %s deleted successfully", submission_id)
+
+
+@router.post("/restaurants/{request_id}/approval")
+async def restaurant_submit_approval(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSchema = Depends(get_admin_user),
+):
+    """POST /restaurants/{request_id}/approval 엔드포인트"""
+    logger.info(
+        "Approval request received for request_id: %s by user: %s",
+        request_id,
+        current_user.id,
+    )
+
+    result = await db.execute(
+        select(RestaurantSubmission).filter(RestaurantSubmission.id == request_id)
+    )
+    submission = result.scalars().first()
+    if not submission:
+        logger.warning("Submission with id %s not found", request_id)
+        raise HTTPException(
+            status_code=404, detail="해당 제출 요청이 존재하지 않습니다."
+        )
+    if submission.status != "pending":
+        logger.warning(
+            "Submission with id %s is already processed with status: %s",
+            request_id,
+            submission.status,
+        )
+        raise HTTPException(
+            status_code=400, detail="해당 제출 요청은 이미 처리되었습니다."
+        )
+
+    logger.debug("Approving submission with id %s", request_id)
+    submission.status = "approved"
+    submission.approver = current_user.id
+    submission.approved_time = datetime.now()
+
+    operating_hours_result = await db.execute(
+        select(OperatingHours).filter(OperatingHours.submission_id == request_id)
+    )
+    operating_hours = operating_hours_result.scalars().all()
+    logger.debug(
+        "Found %s operating hours for submission id %s",
+        len(operating_hours),
+        request_id,
+    )
+
+    new_restaurant = Restaurant(
+        name=submission.name,
+        owner=submission.submitter,
+        location_type=submission.location_type,
+        building_name=submission.building_name,
+        naver_map_link=submission.naver_map_link,
+        kakao_map_link=submission.kakao_map_link,
+        latitude=submission.latitude,
+        longitude=submission.longitude,
+    )
+
+    db.add(new_restaurant)
+    logger.info("New restaurant created with name: %s", new_restaurant.name)
+
+    # operating_hours 복제
+    for operating_hour in operating_hours:
+        db.add(
+            OperatingHours(
+                type=operating_hour.type,
+                start_time=operating_hour.start_time,
+                end_time=operating_hour.end_time,
+                restaurant_id=new_restaurant.id,
+            )
+        )
+        logger.debug(
+            "Operating hour %s added for restaurant id %s",
+            operating_hour.type,
+            new_restaurant.id,
+        )
+
+    await db.commit()
+    logger.info("Approval process completed for request_id: %s", request_id)
+
+    response_data = ApproverResponse(restaurant_id=new_restaurant.id)
+
+    return BaseSchema[ApproverResponse](data=response_data)

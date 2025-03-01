@@ -64,6 +64,11 @@ class SubmissionResponse(BaseModel):
     request_id: int
     message: Optional[str] = "등록 요청이 성공적으로 접수되었습니다."
 
+class ApproverResponse(BaseModel):
+    status: str = "approved"
+    restaurant_id: int
+    message: Optional[str] = "등록 요청이 승인되었습니다."
+
 class UserSchema(BaseModel):
     id: int
     name: str

@@ -7,6 +7,7 @@ from app.database import AsyncSessionLocal
 from app.models import User  # User 모델이 models 디렉토리에 있다고 가정
 from app.schemas.restaurants import UserSchema
 from app.config import Config
+from app.utils.http import get_async_client
 
 
 async def get_db():
@@ -31,9 +32,11 @@ async def get_current_user(
 
 
 async def get_user_info(
-    user_id: int, client: AsyncClient = Depends(AsyncClient)
+    user_id: int, client: AsyncClient = Depends(get_async_client)
 ) -> UserSchema:
     """사용자 정보를 가져와 User 객체 반환"""
+    if Config.debug:
+        return UserSchema(id=2, is_admin=True, name="테스트 사용자", email="ident@example.com", created_at="2021-08-01T00:00:00", updated_at="2021-08-01T00:00:00")
     response = await client.get(f"{Config.USER_SERVICE_URL}/users/{user_id}")
     response.raise_for_status()
     return UserSchema.model_validate(response.json(), strict=False)
@@ -49,10 +52,10 @@ async def check_admin_user(user: UserSchema = Depends(get_current_user)) -> User
 async def get_admin_user(
     x_user_id: int = Header(None),
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(AsyncClient),
+    client: AsyncClient = Depends(get_async_client),
 ) -> UserSchema:
     """현재 사용자가 관리자 권한을 가지고 있는지 확인하고 UserSchema 반환"""
     user = await get_current_user(x_user_id, db)
     user_info = await get_user_info(user.id, client)
-    admin_user = check_admin_user(user_info)
+    admin_user = await check_admin_user(user_info)
     return admin_user
