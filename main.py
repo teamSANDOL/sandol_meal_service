@@ -7,7 +7,7 @@ import uvicorn
 
 from app.config import logger, Config
 from app.routers import meals_router, restaurants_router
-from app.utils.sync_meal_types import sync_meal_types
+from app.utils.sync_meal_types import sync_meal_types, sync_test_users
 from app.database import init_db
 
 
@@ -30,6 +30,9 @@ async def lifespan(app: FastAPI):
 
     # 서버 시작 시 meal_type 동기화 실행
     await sync_meal_types()
+
+    # DEBUG 모드일 때, test_user 동기화 실행
+    await sync_test_users()
 
     yield  # FastAPI가 실행 중인 동안 유지됨
 
