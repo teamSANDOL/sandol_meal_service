@@ -10,8 +10,8 @@ from app.models.restaurants import (
     OperatingHours,
     Restaurant,
     RestaurantSubmission,
-    User,
 )
+from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.restaurants import (
     ApproverResponse,

@@ -7,7 +7,7 @@ from sqlalchemy import func
 
 from app.database import AsyncSessionLocal
 from app.models.meals import MealType
-from app.models.restaurants import User
+from app.models.user import User
 from app.config import Config, logger
 
 
