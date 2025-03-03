@@ -176,3 +176,5 @@ cython_debug/
 # db파일 동기화 방지
 *.db
 !test*.db
+
+.vscode/
