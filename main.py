@@ -7,7 +7,7 @@ import uvicorn
 
 from app.config import logger, Config
 from app.routers import meals_router, restaurants_router
-from app.utils.sync_meal_types import sync_meal_types, sync_test_users
+from app.utils.lifespan import sync_meal_types, sync_test_users
 from app.database import init_db
 
 

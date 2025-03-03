@@ -1,2 +1,2 @@
 from .db import get_db
-from .sync_meal_types import sync_meal_types
+from .lifespan import sync_meal_types, sync_test_users
