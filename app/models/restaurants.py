@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Text,
     TIMESTAMP,
+    Boolean
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,7 +28,8 @@ class Restaurant(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     owner: Mapped[int] = mapped_column(Integer, ForeignKey("User.id"), nullable=False)
-    location_type: Mapped[str] = mapped_column(Text, nullable=False)
+    is_campus: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
 
     building_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     naver_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -72,8 +74,9 @@ class RestaurantSubmission(Base):
     submitted_time: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     approver: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     approved_time: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
-    location_type: Mapped[str] = mapped_column(Text, nullable=False)
+    establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
 
+    is_campus: Mapped[bool] = mapped_column(Boolean, nullable=False)
     building_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     naver_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     kakao_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

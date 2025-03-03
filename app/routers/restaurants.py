@@ -46,7 +46,8 @@ async def restaurant_submit_request(
         status="pending",
         submitter=current_user.id,
         submitted_time=datetime.now(),
-        location_type=request.location.type,
+        establishment_type=request.establishment_type,
+        is_campus=request.location.is_campus,
         building_name=request.location.building,
         naver_map_link=request.location.map_links.get("naver")
         if request.location.map_links
@@ -191,6 +192,11 @@ async def restaurant_submit_approval(
     submission.approver = current_user.id
     submission.approved_time = datetime.now()
 
+    db.add(submission)
+    await db.commit()
+    await db.refresh(submission)
+    logger.info("Submission with id %s approved", submission.id)
+
     operating_hours_result = await db.execute(
         select(OperatingHours).filter(OperatingHours.submission_id == request_id)
     )
@@ -204,7 +210,8 @@ async def restaurant_submit_approval(
     new_restaurant = Restaurant(
         name=submission.name,
         owner=submission.submitter,
-        location_type=submission.location_type,
+        establishment_type=submission.establishment_type,
+        is_campus=submission.is_campus,
         building_name=submission.building_name,
         naver_map_link=submission.naver_map_link,
         kakao_map_link=submission.kakao_map_link,
@@ -213,7 +220,13 @@ async def restaurant_submit_approval(
     )
 
     db.add(new_restaurant)
-    logger.info("New restaurant created with name: %s", new_restaurant.name)
+    await db.commit()  # 먼저 커밋하여 ID 확보
+    await db.refresh(new_restaurant)
+    logger.info(
+        "New restaurant created with name: %s, id: %s",
+        new_restaurant.name,
+        new_restaurant.id,
+    )
 
     # operating_hours 복제
     for operating_hour in operating_hours:
