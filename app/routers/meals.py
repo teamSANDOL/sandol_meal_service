@@ -9,10 +9,10 @@ from app.models.meals import Meal
 from app.schemas.meals import MealResponse
 from app.schemas.pagination import CustomPage
 
-router = APIRouter()
+router = APIRouter(prefix="/meals")
 
 
-@router.get("/meals", response_model=CustomPage[MealResponse])
+@router.get("/", response_model=CustomPage[MealResponse])
 async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depends()):
     """모든 식사 데이터를 반환합니다."""
     return await paginate(db, select(Meal), params=params)  # 비동기 페이징
