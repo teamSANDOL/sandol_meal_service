@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from fastapi_pagination import Params, add_pagination, paginate
 
 from app.config import logger
 from app.models.restaurants import (
@@ -18,9 +19,13 @@ from app.schemas.restaurants import (
     SubmissionResponse,
     TimeRange,
     UserSchema,
+    Location,
 )
+from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
+from app.schemas.restaurants import RestaurantResponse as RestaurantSchema
 from app.utils.db import get_admin_user, get_current_user, get_db
 from app.utils.times import get_datetime_by_string
+from app.schemas.pagination import CustomPage
 
 router = APIRouter(prefix="/restaurants")
 
@@ -118,43 +123,6 @@ async def restaurant_submit_request(
     return BaseSchema[SubmissionResponse](data=response_data)
 
 
-@router.delete("/requests/{submission_id}", status_code=204)
-async def restaurant_submit_delete(
-    submission_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """DELETE /restaurants/requests/{submission_id} 엔드포인트"""
-    logger.info(
-        "Delete request received for submission_id: %s by user: %s",
-        submission_id,
-        current_user.id,
-    )
-
-    result = await db.execute(
-        select(RestaurantSubmission).filter(RestaurantSubmission.id == submission_id)
-    )
-    submission = result.scalars().first()
-    if not submission:
-        logger.warning("Submission with id %s not found", submission_id)
-        raise HTTPException(
-            status_code=404, detail="해당 제출 요청이 존재하지 않습니다."
-        )
-    if submission.submitter != current_user.id:
-        logger.warning(
-            "User %s does not have permission to delete submission with id %s",
-            current_user.id,
-            submission_id,
-        )
-        raise HTTPException(
-            status_code=403, detail="해당 제출 요청을 삭제할 권한이 없습니다."
-        )
-
-    await db.delete(submission)
-    await db.commit()
-    logger.info("Submission with id %s deleted successfully", submission_id)
-
-
 @router.post("/restaurants/{request_id}/approval")
 async def restaurant_submit_approval(
     request_id: int,
@@ -250,3 +218,228 @@ async def restaurant_submit_approval(
     response_data = ApproverResponse(restaurant_id=new_restaurant.id)
 
     return BaseSchema[ApproverResponse](data=response_data)
+
+
+@router.get("/requests/{request_id}")
+async def restaurant_submit_get(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /restaurants/requests/{request_id} 엔드포인트"""
+    logger.info(
+        "Get request received for submission_id: %s by user: %s",
+        request_id,
+        current_user.id,
+    )
+
+    result = await db.execute(
+        select(RestaurantSubmission).filter(RestaurantSubmission.id == request_id)
+    )
+    submission = result.scalars().first()
+    if not submission:
+        logger.warning("Submission with id %s not found", request_id)
+        raise HTTPException(
+            status_code=404, detail="해당 제출 요청이 존재하지 않습니다."
+        )
+
+    logger.info("Submission with id %s found", request_id)
+
+    operating_hours_result = await db.execute(
+        select(OperatingHours).filter(OperatingHours.submission_id == request_id)
+    )
+    operating_hours = operating_hours_result.scalars().all()
+    operating_hours_dict = {
+        operating_hour.type: TimeRange(
+            start=operating_hour.start_time, end=operating_hour.end_time
+        )
+        for operating_hour in operating_hours
+    }
+    logger.debug(
+        "Found %s operating hours for submission id %s",
+        len(operating_hours),
+        request_id,
+    )
+
+    map_links = {}
+    if submission.naver_map_link:
+        map_links["naver"] = submission.naver_map_link
+    if submission.kakao_map_link:
+        map_links["kakao"] = submission.kakao_map_link
+
+    response_data = RestaurantSubmissionSchema(
+        status=submission.status,  # type: ignore
+        submitter=submission.submitter,
+        submitted_time=submission.submitted_time,
+        id=submission.id,
+        name=submission.name,
+        establishment_type=submission.establishment_type,  # type: ignore
+        location=Location(
+            is_campus=submission.is_campus,
+            building=submission.building_name,
+            map_links=map_links if map_links else None,
+            latitude=submission.latitude,
+            longitude=submission.longitude,
+        ),
+        opening_time=operating_hours_dict.get("opening_time"),
+        break_time=operating_hours_dict.get("break_time"),
+        breakfast_time=operating_hours_dict.get("breakfast_time"),
+        brunch_time=operating_hours_dict.get("brunch_time"),
+        lunch_time=operating_hours_dict.get("lunch_time"),
+        dinner_time=operating_hours_dict.get("dinner_time"),
+    )
+
+    return BaseSchema[RestaurantSubmissionSchema](data=response_data)
+
+
+@router.delete("/requests/{request_id}", status_code=204)
+async def restaurant_submit_delete(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """DELETE /restaurants/requests/{submission_id} 엔드포인트"""
+    logger.info(
+        "Delete request received for submission_id: %s by user: %s",
+        request_id,
+        current_user.id,
+    )
+
+    result = await db.execute(
+        select(RestaurantSubmission).filter(RestaurantSubmission.id == request_id)
+    )
+    submission = result.scalars().first()
+    if not submission:
+        logger.warning("Submission with id %s not found", request_id)
+        raise HTTPException(
+            status_code=404, detail="해당 제출 요청이 존재하지 않습니다."
+        )
+    if submission.submitter != current_user.id:
+        logger.warning(
+            "User %s does not have permission to delete submission with id %s",
+            current_user.id,
+            request_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="해당 제출 요청을 삭제할 권한이 없습니다."
+        )
+
+    await db.delete(submission)
+    await db.commit()
+    logger.info("Submission with id %s deleted successfully", request_id)
+
+
+@router.get("/{restaurant_id}")
+async def get_restaurant(
+    restaurant_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """GET /restaurants/{restaurant_id} 엔드포인트"""
+    logger.info("Get request received for restaurant_id: %s", restaurant_id)
+
+    result = await db.execute(select(Restaurant).filter(Restaurant.id == restaurant_id))
+    restaurant = result.scalars().first()
+    if not restaurant:
+        logger.warning("Restaurant with id %s not found", restaurant_id)
+        raise HTTPException(status_code=404, detail="해당 식당이 존재하지 않습니다.")
+
+    operating_hours_result = await db.execute(
+        select(OperatingHours).filter(OperatingHours.restaurant_id == restaurant_id)
+    )
+    operating_hours = operating_hours_result.scalars().all()
+    operating_hours_dict = {
+        operating_hour.type: TimeRange(
+            start=operating_hour.start_time, end=operating_hour.end_time
+        )
+        for operating_hour in operating_hours
+    }
+    logger.debug(
+        "Found %s operating hours for restaurant id %s",
+        len(operating_hours),
+        restaurant_id,
+    )
+
+    map_links = {}
+    if restaurant.naver_map_link:
+        map_links["naver"] = restaurant.naver_map_link
+    if restaurant.kakao_map_link:
+        map_links["kakao"] = restaurant.kakao_map_link
+
+    response_data = RestaurantSchema(
+        id=restaurant.id,
+        name=restaurant.name,
+        owner=restaurant.owner,
+        establishment_type=restaurant.establishment_type,
+        location=Location(
+            is_campus=restaurant.is_campus,
+            building=restaurant.building_name,
+            map_links=map_links if map_links else None,
+            latitude=restaurant.latitude,
+            longitude=restaurant.longitude,
+        ),
+        opening_time=operating_hours_dict.get("opening_time"),
+        break_time=operating_hours_dict.get("break_time"),
+        breakfast_time=operating_hours_dict.get("breakfast_time"),
+        brunch_time=operating_hours_dict.get("brunch_time"),
+        lunch_time=operating_hours_dict.get("lunch_time"),
+        dinner_time=operating_hours_dict.get("dinner_time"),
+    )
+
+    return BaseSchema[RestaurantSchema](data=response_data)
+
+@router.get("/", response_model=CustomPage[RestaurantSchema])
+async def get_restaurants(db: AsyncSession = Depends(get_db), params: Params = Depends()):
+    """모든 업체 데이터를 반환합니다."""
+    # 1️⃣ SQLAlchemy ORM 객체 가져오기
+    result = await db.execute(select(Restaurant))
+    restaurants = result.scalars().all()
+
+    # 2️⃣ ORM 객체 → Pydantic 변환
+    restaurant_schemas= []
+    for restaurant in restaurants:
+        operating_hours_result = await db.execute(
+            select(OperatingHours).filter(OperatingHours.restaurant_id == restaurant.id)
+        )
+        operating_hours = operating_hours_result.scalars().all()
+        operating_hours_dict = {
+            operating_hour.type: TimeRange(
+                start=operating_hour.start_time, end=operating_hour.end_time
+            )
+            for operating_hour in operating_hours
+        }
+        logger.debug(
+            "Found %s operating hours for restaurant id %s",
+            len(operating_hours),
+            restaurant.id,
+        )
+
+        map_links = {}
+        if restaurant.naver_map_link:
+            map_links["naver"] = restaurant.naver_map_link
+        if restaurant.kakao_map_link:
+            map_links["kakao"] = restaurant.kakao_map_link
+
+        response_data = RestaurantSchema(
+            id=restaurant.id,
+            name=restaurant.name,
+            owner=restaurant.owner,
+            establishment_type=restaurant.establishment_type,
+            location=Location(
+                is_campus=restaurant.is_campus,
+                building=restaurant.building_name,
+                map_links=map_links if map_links else None,
+                latitude=restaurant.latitude,
+                longitude=restaurant.longitude,
+            ),
+            opening_time=operating_hours_dict.get("opening_time"),
+            break_time=operating_hours_dict.get("break_time"),
+            breakfast_time=operating_hours_dict.get("breakfast_time"),
+            brunch_time=operating_hours_dict.get("brunch_time"),
+            lunch_time=operating_hours_dict.get("lunch_time"),
+            dinner_time=operating_hours_dict.get("dinner_time"),
+        )
+        restaurant_schemas.append(response_data)
+
+    return paginate(restaurant_schemas, params)
+
+add_pagination(router)

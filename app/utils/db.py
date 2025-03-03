@@ -4,7 +4,7 @@ from sqlalchemy.future import select
 from httpx import AsyncClient
 
 from app.database import AsyncSessionLocal
-from app.models import User  # User 모델이 models 디렉토리에 있다고 가정
+from app.models.restaurants import User  # User 모델이 models 디렉토리에 있다고 가정
 from app.schemas.restaurants import UserSchema
 from app.config import Config
 from app.utils.http import get_async_client
