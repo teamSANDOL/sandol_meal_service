@@ -53,21 +53,29 @@ class MealType(str, Enum):
 
 class BaseMeal(BaseModel):
     """공통 Meal 모델"""
-
-    id: int
     menu: list[str]
-    registered_at: Timestamp
     meal_type: MealType
 
+class MealRegister(BaseMeal):
+    """식사 등록 모델"""
+
+class MealRegisterResponse(BaseModel):
+    """식사 등록 응답"""
+
+    id: int
+    restaurant_id: int
+    meal_type: MealType
+    registered_at: Timestamp
 
 class MealResponse(BaseMeal):
     """개별 식사 응답 모델"""
-
+    id : int
+    registered_at: Timestamp
     restaurant_id: int
     restaurant_name: str
 
 
-class RestaurantMeal(BaseMeal):
+class RestaurantMeal(MealResponse):
     """식당 내 개별 식사 모델"""
 
 
@@ -77,15 +85,6 @@ class RestaurantMealResponse(BaseModel):
     id: int
     name: str
     meals: list[RestaurantMeal]
-
-
-class MealRegisterResponse(BaseModel):
-    """식사 등록 응답"""
-
-    id: str
-    restaurant_id: str
-    meal_type: MealType
-    registered_at: Timestamp
 
 
 class MealEditResponse(BaseModel):
