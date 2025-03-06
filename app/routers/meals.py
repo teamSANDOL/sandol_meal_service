@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from fastapi_pagination import Params, add_pagination
 from fastapi_pagination import paginate
 
@@ -25,7 +26,11 @@ router = APIRouter(prefix="/meals")
 @router.get("/", response_model=CustomPage[MealResponse])
 async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depends()):
     """모든 식사 데이터를 반환합니다."""
-    result = await db.execute(select(Meal))
+    result = await db.execute(
+        select(Meal)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
     meals = result.scalars().all()
 
     # ✅ Meal 객체를 MealResponse Pydantic 모델로 변환
@@ -33,7 +38,7 @@ async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depend
         MealResponse(
             id=meal.id,
             menu=meal.menu,
-            meal_type=MealType(meal.meal_type.name),  # MealType Enum을 str로 변환
+            meal_type=MealTypeSchema(meal.meal_type.name),  # MealType Enum을 str로 변환
             restaurant_id=meal.restaurant_id,
             restaurant_name=meal.restaurant.name,
             registered_at=meal.registered_at,
