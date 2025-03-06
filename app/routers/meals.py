@@ -5,12 +5,17 @@ from sqlalchemy.future import select
 from fastapi_pagination import Params, add_pagination
 from fastapi_pagination import paginate
 
-from app.utils.db import get_admin_user, get_current_user, get_db
+from app.utils.db import get_current_user, get_db
 from app.models.meals import Meal, MealType
 from app.models.restaurants import Restaurant
 from app.models.user import User
 from app.schemas.base import BaseSchema
-from app.schemas.meals import MealResponse, MealRegister, MealRegisterResponse, Timestamp
+from app.schemas.meals import (
+    MealResponse,
+    MealRegister,
+    MealRegisterResponse,
+    Timestamp,
+)
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
 
@@ -28,23 +33,24 @@ async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depend
         MealResponse(
             id=meal.id,
             menu=meal.menu,
-            meal_type=meal.meal_type.name,  # MealType Enum을 str로 변환
+            meal_type=MealType(meal.meal_type.name),  # MealType Enum을 str로 변환
             restaurant_id=meal.restaurant_id,
             restaurant_name=meal.restaurant.name,
-            registered_at=meal.registered_at
+            registered_at=meal.registered_at,
         )
         for meal in meals
     ]
 
     return paginate(response_data, params)
 
+
 @router.post("/{restaurant_id}")
 async def register_meal(
     restaurant_id: int,
     meal_register: MealRegister,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-    ):
+    current_user: User = Depends(get_current_user),
+):
     """식사를 등록합니다."""
     # restaurant_id와 current_user.id를 사용해 db 조회
     restaurant_result = await db.execute(
@@ -52,15 +58,20 @@ async def register_meal(
             Restaurant.id == restaurant_id,
             or_(
                 Restaurant.owner == current_user.id,
-                Restaurant.managers.any(User.id == current_user.id)
-            )
+                Restaurant.managers.any(User.id == current_user.id),
+            ),
         )
     )
-    restaurant: Restaurant | None= restaurant_result.scalars().first()
+    restaurant: Restaurant | None = restaurant_result.scalars().first()
     if not restaurant:
-        raise HTTPException(status_code=404, detail="Restaurant not found or you do not have permission to access it")
+        raise HTTPException(
+            status_code=404,
+            detail="Restaurant not found or you do not have permission to access it",
+        )
 
-    meal_type_result = await db.execute(select(MealType).where(MealType.name == meal_register.meal_type))
+    meal_type_result = await db.execute(
+        select(MealType).where(MealType.name == meal_register.meal_type)
+    )
     meal_type = meal_type_result.scalars().first()
     if not meal_type:
         raise HTTPException(status_code=404, detail="Meal type not found")
@@ -84,5 +95,6 @@ async def register_meal(
         registered_at=time_stamp_schema,
     )
     return BaseSchema[MealRegisterResponse](data=response_data)
+
 
 add_pagination(router)

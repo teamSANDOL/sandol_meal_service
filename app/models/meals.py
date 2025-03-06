@@ -1,13 +1,10 @@
 from __future__ import annotations
-from typing import List, Optional, Dict, Any
+from typing import List
 from datetime import datetime
 import json
 
 from sqlalchemy import (
     BigInteger,
-    CheckConstraint,
-    Column,
-    Float,
     ForeignKey,
     Index,
     Integer,
@@ -22,9 +19,10 @@ from sqlalchemy.types import TypeDecorator, JSON
 from app.database import Base
 from app.models.restaurants import Restaurant
 
+
 class NonEscapedJSON(TypeDecorator):
     """한글이 유니코드로 저장되지 않도록 하는 JSON 타입"""
-    
+
     impl = JSON
 
     def process_bind_param(self, value, dialect):
@@ -38,6 +36,7 @@ class NonEscapedJSON(TypeDecorator):
         if value is not None:
             return json.loads(value)
         return value
+
 
 class MealType(Base):
     """식사 유형을 저장하는 클래스 (예: breakfast, brunch, lunch, dinner)"""
@@ -55,17 +54,25 @@ class Meal(Base):
     __tablename__ = "meal"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    restaurant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("Restaurant.id"), nullable=False)
+    restaurant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("Restaurant.id"), nullable=False
+    )
     menu: Mapped[List[str]] = mapped_column(NonEscapedJSON, nullable=False, default={})
-    registered_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
+    registered_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
-    meal_type_id: Mapped[int] = mapped_column(Integer, ForeignKey("meal_type.id"), nullable=False)
+    meal_type_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("meal_type.id"), nullable=False
+    )
 
     # 관계 설정
     restaurant: Mapped[Restaurant] = relationship("Restaurant", back_populates="meals")
     meal_type: Mapped[MealType] = relationship("MealType")
 
-    __table_args__ = (
-        Index("meal_restaurant_id_index", "restaurant_id"),
-    )
+    __table_args__ = (Index("meal_restaurant_id_index", "restaurant_id"),)
