@@ -33,7 +33,7 @@ class Location(BaseModel):
     longitude: Optional[float] = None
 
 
-class Restaurant(BaseModel):
+class RestaurantSchema(BaseModel):
     name: str
     establishment_type: Literal["student", "vendor", "external"]
     location: Optional[Location] = None
@@ -45,17 +45,18 @@ class Restaurant(BaseModel):
     dinner_time: Optional[TimeRange] = None
 
 
-class RestaurantResponse(Restaurant):
+class RestaurantResponse(RestaurantSchema):
     """GET /restaurants/{id} 엔드포인트 및 /restaurants 엔드포인트 응답 바디"""
+
     id: int
     owner: Optional[int] = None
 
 
-class RestaurantRequest(Restaurant):
+class RestaurantRequest(RestaurantSchema):
     """POST /restaurants/requests 엔드포인트 요청 바디"""
 
 
-class RestaurantSubmission(Restaurant):
+class RestaurantSubmission(RestaurantSchema):
     status: Literal["pending", "approved", "rejected"] = "pending"
     submitter: int
     submitted_time: datetime
