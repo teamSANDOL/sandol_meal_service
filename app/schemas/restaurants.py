@@ -1,10 +1,8 @@
 from datetime import datetime
-from enum import Enum
 from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel
 
-from app.models.restaurants import Restaurant as RestaurantModel
 from app.utils.times import get_datetime_by_string
 
 

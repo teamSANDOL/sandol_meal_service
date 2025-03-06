@@ -10,7 +10,6 @@ from sqlalchemy import (
     Integer,
     Text,
     TIMESTAMP,
-    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func

@@ -3,16 +3,14 @@ from typing import List, Optional
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger,
     CheckConstraint,
-    Column,
     Float,
     ForeignKey,
     Index,
     Integer,
     Text,
     TIMESTAMP,
-    Boolean
+    Boolean,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -70,7 +68,9 @@ class RestaurantSubmission(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    submitter: Mapped[int] = mapped_column(Integer, ForeignKey("User.id"), nullable=False)
+    submitter: Mapped[int] = mapped_column(
+        Integer, ForeignKey("User.id"), nullable=False
+    )
     submitted_time: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     approver: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     approved_time: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
@@ -111,7 +111,9 @@ class OperatingHours(Base):
     end_time: Mapped[str] = mapped_column(Text, nullable=False)
 
     # ✅ Restaurant와 1:N 관계
-    restaurant_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("Restaurant.id"), nullable=True)
+    restaurant_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("Restaurant.id"), nullable=True
+    )
 
     # ✅ RestaurantSubmission과 1:N 관계
     submission_id: Mapped[Optional[int]] = mapped_column(

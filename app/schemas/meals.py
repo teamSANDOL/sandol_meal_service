@@ -1,7 +1,7 @@
 from enum import Enum
 from pydantic import BaseModel
 
-from .base import Timestamp
+from app.schemas.base import Timestamp
 
 
 class MealType(str, Enum):

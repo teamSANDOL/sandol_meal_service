@@ -18,11 +18,13 @@ fastapi-pagination = "^0.12.34"
 python-dotenv = "^1.0.1"
 aiosqlite = "^0.21.0"
 alembic = "^1.15.1"
+cachetools = "^5.5.2"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.9"
 black = "^25.1.0"
 mypy = "^1.15.0"
+types-cachetools = "^5.5.0.20240820"
 
 [build-system]
 requires = ["poetry-core"]
