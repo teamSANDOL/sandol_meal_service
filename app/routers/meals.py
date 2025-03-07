@@ -23,7 +23,7 @@ from app.schemas.pagination import CustomPage
 router = APIRouter(prefix="/meals")
 
 
-@router.get("/", response_model=CustomPage[MealResponse])
+@router.get("", response_model=CustomPage[MealResponse])
 async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depends()):
     """모든 식사 데이터를 반환합니다."""
     result = await db.execute(
