@@ -78,6 +78,36 @@ async def get_meal(
     return BaseSchema[MealResponse](data=response_data)
 
 
+@router.get("/restaurant/{restaurant_id}", response_model=CustomPage[MealResponse])
+async def list_meals_by_restaurant(
+    restaurant_id: int,
+    db: AsyncSession = Depends(get_db),
+    params: Params = Depends(),
+):
+    """특정 식당의 모든 식사 데이터를 반환합니다."""
+    result = await db.execute(
+        select(Meal)
+        .where(Meal.restaurant_id == restaurant_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+    meals = result.scalars().all()
+
+    response_data: list[MealResponse] = [
+        MealResponse(
+            id=meal.id,
+            menu=meal.menu,
+            meal_type=MealTypeSchema(meal.meal_type.name),
+            restaurant_id=meal.restaurant_id,
+            restaurant_name=meal.restaurant.name,
+            registered_at=meal.registered_at,
+        )
+        for meal in meals
+    ]
+
+    return paginate(response_data, params)
+
+
 @router.delete("/{meal_id}", status_code=204)
 async def delete_meal(
     meal_id: int,
