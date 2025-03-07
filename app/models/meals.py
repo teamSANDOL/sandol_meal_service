@@ -9,7 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
-    TIMESTAMP,
+    DateTime,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -58,12 +58,16 @@ class Meal(Base):
     )
     menu: Mapped[List[str]] = mapped_column(NonEscapedJSON, nullable=False, default={})
     registered_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
+        DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+        onupdate=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
     meal_type_id: Mapped[int] = mapped_column(

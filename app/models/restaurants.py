@@ -9,10 +9,11 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
-    TIMESTAMP,
+    DateTime,
     Boolean,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
 
 from app.database import Base
 from app.models.associations import restaurant_manager_association
@@ -71,9 +72,17 @@ class RestaurantSubmission(Base):
     submitter: Mapped[int] = mapped_column(
         Integer, ForeignKey("User.id"), nullable=False
     )
-    submitted_time: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    submitted_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
     approver: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    approved_time: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP, nullable=True)
+    approved_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        server_default=func.now(),
+    )
     establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
 
     is_campus: Mapped[bool] = mapped_column(Boolean, nullable=False)

@@ -50,7 +50,6 @@ async def restaurant_submit_request(
         name=request.name,
         status="pending",
         submitter=current_user.id,
-        submitted_time=datetime.now(),
         establishment_type=request.establishment_type,
         is_campus=request.location.is_campus,
         building_name=request.location.building,
@@ -158,7 +157,6 @@ async def restaurant_submit_approval(
     logger.debug("Approving submission with id %s", request_id)
     submission.status = "approved"
     submission.approver = current_user.id
-    submission.approved_time = datetime.now()
 
     db.add(submission)
     await db.commit()
