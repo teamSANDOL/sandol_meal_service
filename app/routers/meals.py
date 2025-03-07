@@ -15,6 +15,7 @@ from app.schemas.meals import (
     MealResponse,
     MealRegister,
     MealRegisterResponse,
+    MealEdit,
     Timestamp,
 )
 from app.schemas.meals import MealType as MealTypeSchema
@@ -194,5 +195,38 @@ async def register_meal(
     )
     return BaseSchema[MealRegisterResponse](data=response_data)
 
+
+@router.delete("/{meal_id}/menus", status_code=204)
+async def delete_meal_menu(
+    meal_id: int,
+    meal_edit: MealEdit,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    ):
+    """특정 식사의 메뉴를 삭제합니다."""
+    result = await db.execute(
+        select(Meal)
+        .where(Meal.id == meal_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+    meal: Meal | None = result.scalars().first()
+
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+
+    if meal.restaurant.owner != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to access it")
+
+    if isinstance(meal_edit.menu, str) and meal_edit.menu in meal.menu:
+        meal.menus.remove(meal_edit.menu)
+    else:
+        for menu in meal_edit.menu:
+            if menu in meal.menu:
+                meal.menu.remove(menu)
+
+
+    await db.commit()
+    await db.refresh(meal)
 
 add_pagination(router)

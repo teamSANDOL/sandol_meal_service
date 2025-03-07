@@ -54,6 +54,11 @@ class RestaurantMealResponse(BaseModel):
     meals: list[RestaurantMeal]
 
 
+class MealEdit(BaseMeal):
+    """식사 수정 모델"""
+    menu: list[str] | str
+
+
 class MealEditResponse(BaseModel):
     """식사 수정 응답"""
 
