@@ -27,18 +27,21 @@ if config.config_file_name is not None:
 
 # ✅ SQLAlchemy 모델 자동 감지
 from app.database import Base  # Base.metadata 자동 불러오기
-import app.models  # 모든 모델 자동 import
 from app.models.meals import NonEscapedJSON  # ✅ 커스텀 타입 추가
 
 target_metadata = Base.metadata
+
 
 # ✅ 커스텀 타입을 자동으로 마이그레이션 파일에 포함하도록 설정
 def render_item(type_, obj, autogen_context):
     """Alembic이 마이그레이션 파일을 생성할 때 커스텀 타입을 자동으로 인식"""
     if isinstance(obj, NonEscapedJSON):
-        autogen_context.imports.add("from app.models.meals import NonEscapedJSON")  # ✅ 자동 import 추가
+        autogen_context.imports.add(
+            "from app.models.meals import NonEscapedJSON"
+        )  # ✅ 자동 import 추가
         return "NonEscapedJSON()"
     return False  # 기본 동작 유지
+
 
 # ✅ 비동기 DB 엔진 생성
 connectable = create_async_engine(DATABASE_URL, poolclass=pool.NullPool, future=True)
@@ -62,7 +65,11 @@ async def run_migrations_online():
     """온라인 모드에서 마이그레이션 실행"""
     async with connectable.connect() as connection:
         await connection.run_sync(
-            lambda conn: context.configure(connection=conn, target_metadata=target_metadata, render_item=render_item)
+            lambda conn: context.configure(
+                connection=conn,
+                target_metadata=target_metadata,
+                render_item=render_item,
+            )
         )
         await connection.run_sync(lambda conn: context.run_migrations())
 

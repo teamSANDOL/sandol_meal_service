@@ -60,14 +60,13 @@ class Meal(Base):
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=func.utcnow(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=func.utcnow(),
+        onupdate=func.utcnow(),
     )
 
     meal_type_id: Mapped[int] = mapped_column(

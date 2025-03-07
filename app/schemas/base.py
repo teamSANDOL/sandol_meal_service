@@ -40,6 +40,8 @@ class Timestamp:
                 dt = datetime.fromisoformat(value)
                 if dt.tzinfo is None:
                     # ✅ 타임존이 없는 경우, 기본적으로 UTC로 간주한 후 KST로 변환
+                    logger.debug(f"Naive string: {dt.isoformat()}")
+                    logger.debug(f"Timezone info: {Config.TIMEZONE}")
                     dt = dt.replace(tzinfo=timezone.utc).astimezone(Config.TZ)
                     logger.debug(
                         f"Converted naive string to KST datetime: {dt.isoformat()}"
@@ -58,7 +60,7 @@ class Timestamp:
                 # ✅ datetime 객체에 타임존이 없으면 KST로 간주
                 logger.debug(f"Naive datetime: {value.isoformat()}")
                 logger.debug(f"Timezone info: {Config.TIMEZONE}")
-                dt = value.astimezone(Config.TZ)
+                dt = value.replace(tzinfo=timezone.utc).astimezone(Config.TZ)
                 logger.debug(f"Converted naive datetime to KST: {dt.isoformat()}")
                 return dt
             else:

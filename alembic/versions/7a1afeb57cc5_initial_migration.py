@@ -1,8 +1,8 @@
 """Initial migration
 
-Revision ID: 3c96d5ed6404
+Revision ID: 7a1afeb57cc5
 Revises: 
-Create Date: 2025-03-05 16:40:04.806035
+Create Date: 2025-03-07 12:51:47.779008
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from app.models.meals import NonEscapedJSON
 
 # revision identifiers, used by Alembic.
-revision: str = '3c96d5ed6404'
+revision: str = '7a1afeb57cc5'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -51,9 +51,9 @@ def upgrade() -> None:
     sa.Column('name', sa.Text(), nullable=False),
     sa.Column('status', sa.Text(), nullable=False),
     sa.Column('submitter', sa.Integer(), nullable=False),
-    sa.Column('submitted_time', sa.TIMESTAMP(), nullable=False),
+    sa.Column('submitted_time', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('approver', sa.Integer(), nullable=True),
-    sa.Column('approved_time', sa.TIMESTAMP(), nullable=True),
+    sa.Column('approved_time', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('establishment_type', sa.Text(), nullable=False),
     sa.Column('is_campus', sa.Boolean(), nullable=False),
     sa.Column('building_name', sa.Text(), nullable=True),
@@ -78,7 +78,8 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('restaurant_id', sa.BigInteger(), nullable=False),
     sa.Column('menu', NonEscapedJSON(), nullable=False),
-    sa.Column('registered_at', sa.TIMESTAMP(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('registered_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('meal_type_id', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['meal_type_id'], ['meal_type.id'], ),
     sa.ForeignKeyConstraint(['restaurant_id'], ['Restaurant.id'], ),
