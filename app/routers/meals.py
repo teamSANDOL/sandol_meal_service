@@ -49,6 +49,69 @@ async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depend
     return paginate(response_data, params)
 
 
+@router.get("/{meal_id}", response_model=BaseSchema[MealResponse])
+async def get_meal(
+    meal_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """특정 식사 데이터를 반환합니다."""
+    result = await db.execute(
+        select(Meal)
+        .where(Meal.id == meal_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+    meal: Meal | None = result.scalars().first()
+
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+
+    response_data = MealResponse(
+        id=meal.id,
+        menu=meal.menu,
+        meal_type=MealTypeSchema(meal.meal_type.name),
+        restaurant_id=meal.restaurant_id,
+        restaurant_name=meal.restaurant.name,
+        registered_at=meal.registered_at,  # Timestamp
+    )
+
+    return BaseSchema[MealResponse](data=response_data)
+
+
+@router.delete("/{meal_id}", status_code=204)
+async def delete_meal(
+    meal_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """특정 식사 데이터를 삭제합니다."""
+    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    meal: Meal | None = result.scalars().first()
+
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+
+    # restaurant_id와 current_user.id를 사용해 db 조회
+    restaurant_result = await db.execute(
+        select(Restaurant).where(
+            Restaurant.id == meal.restaurant_id,
+            or_(
+                Restaurant.owner == current_user.id,
+                Restaurant.managers.any(User.id == current_user.id),
+            ),
+        )
+    )
+    restaurant: Restaurant | None = restaurant_result.scalars().first()
+    if not restaurant:
+        raise HTTPException(
+            status_code=404,
+            detail="Restaurant not found or you do not have permission to access it",
+        )
+
+    await db.delete(meal)
+    await db.commit()
+
+
 @router.post("/{restaurant_id}")
 async def register_meal(
     restaurant_id: int,
