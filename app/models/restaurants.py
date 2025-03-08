@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     CheckConstraint,
@@ -13,7 +13,6 @@ from sqlalchemy import (
     Boolean,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 
 from app.database import Base
 from app.models.associations import restaurant_manager_association
@@ -75,13 +74,13 @@ class RestaurantSubmission(Base):
     submitted_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=func.now(),
+        server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
     approver: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     approved_time: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
-        server_default=func.now(),
+        server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
     establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
 

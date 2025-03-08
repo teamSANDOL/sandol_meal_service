@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from sqlalchemy import (
@@ -12,7 +12,6 @@ from sqlalchemy import (
     DateTime,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 from sqlalchemy.types import TypeDecorator, JSON
 
 from app.database import Base
@@ -60,13 +59,13 @@ class Meal(Base):
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=func.utcnow(),
+        server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=func.utcnow(),
-        onupdate=func.utcnow(),
+        server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        onupdate=datetime.now(timezone.utc),
     )
 
     meal_type_id: Mapped[int] = mapped_column(

@@ -40,6 +40,7 @@ class MealResponse(BaseMeal):
     registered_at: Timestamp
     restaurant_id: int
     restaurant_name: str
+    updated_at: Timestamp
 
 
 class RestaurantMeal(MealResponse):
@@ -54,15 +55,16 @@ class RestaurantMealResponse(BaseModel):
     meals: list[RestaurantMeal]
 
 
-class MealEdit(BaseMeal):
-    """식사 수정 모델"""
-    menu: list[str] | str
+class MenuEdit(BaseModel):
+    """메뉴 삭제 모델"""
+
+    menu: str | list[str]
 
 
 class MealEditResponse(BaseModel):
     """식사 수정 응답"""
 
-    id: str
-    restaurant_id: str
+    id: int
+    restaurant_id: int
     meal_type: MealType
     menu: list[str]
