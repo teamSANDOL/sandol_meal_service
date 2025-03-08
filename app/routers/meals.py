@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-from app.config import logger
+from app.config import Config, logger
 from app.models.meals import Meal, MealType
 from app.models.restaurants import Restaurant
 from app.models.user import User
@@ -26,13 +28,52 @@ router = APIRouter(prefix="/meals")
 
 
 @router.get("", response_model=CustomPage[MealResponse])
-async def list_meals(db: AsyncSession = Depends(get_db), params: Params = Depends()):
+async def list_meals(
+    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    params: Params = Depends(),
+):
     """모든 식사 데이터를 반환합니다."""
-    result = await db.execute(
+    query = (
         select(Meal)
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
+
+    # 문자열을 datetime.date로 변환
+    try:
+        start_date_dt = (
+            datetime.strptime(start_date, "%Y-%m-%d")
+            .replace(tzinfo=Config.TZ)
+            .astimezone(timezone.utc)
+            if start_date
+            else None
+        )
+        end_date_dt = (
+            datetime.strptime(end_date, "%Y-%m-%d")
+            .replace(tzinfo=Config.TZ)
+            .astimezone(timezone.utc)
+            if end_date
+            else None
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)"
+        )
+
+    # 날짜 필터링 적용
+    if start_date_dt and end_date_dt:
+        if start_date_dt > end_date_dt:
+            query = query.where(Meal.updated_at.between(end_date_dt, start_date_dt))
+        else:
+            query = query.where(Meal.updated_at.between(start_date_dt, end_date_dt))
+    elif start_date_dt:
+        query = query.where(Meal.updated_at >= start_date_dt)
+    elif end_date_dt:
+        query = query.where(Meal.updated_at <= end_date_dt)
+
+    result = await db.execute(query)
     meals = result.scalars().all()
 
     # ✅ Meal 객체를 MealResponse Pydantic 모델로 변환
@@ -85,16 +126,52 @@ async def get_meal(
 @router.get("/restaurant/{restaurant_id}", response_model=CustomPage[MealResponse])
 async def list_meals_by_restaurant(
     restaurant_id: int,
+    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db),
     params: Params = Depends(),
 ):
     """특정 식당의 모든 식사 데이터를 반환합니다."""
-    result = await db.execute(
+    query = (
         select(Meal)
         .where(Meal.restaurant_id == restaurant_id)
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
+
+    # 문자열을 datetime.date로 변환
+    try:
+        start_date_dt = (
+            datetime.strptime(start_date, "%Y-%m-%d")
+            .replace(tzinfo=Config.TZ)
+            .astimezone(timezone.utc)
+            if start_date
+            else None
+        )
+        end_date_dt = (
+            datetime.strptime(end_date, "%Y-%m-%d")
+            .replace(tzinfo=Config.TZ)
+            .astimezone(timezone.utc)
+            if end_date
+            else None
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)"
+        )
+
+    # 날짜 필터링 적용
+    if start_date_dt and end_date_dt:
+        if start_date_dt > end_date_dt:
+            query = query.where(Meal.updated_at.between(end_date_dt, start_date_dt))
+        else:
+            query = query.where(Meal.updated_at.between(start_date_dt, end_date_dt))
+    elif start_date_dt:
+        query = query.where(Meal.updated_at >= start_date_dt)
+    elif end_date_dt:
+        query = query.where(Meal.updated_at <= end_date_dt)
+
+    result = await db.execute(query)
     meals = result.scalars().all()
 
     response_data: list[MealResponse] = [

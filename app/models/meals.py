@@ -76,4 +76,8 @@ class Meal(Base):
     restaurant: Mapped[Restaurant] = relationship("Restaurant", back_populates="meals")
     meal_type: Mapped[MealType] = relationship("MealType")
 
-    __table_args__ = (Index("meal_restaurant_id_index", "restaurant_id"),)
+    __table_args__ = (
+        Index("meal_restaurant_id_index", "restaurant_id"),
+        Index("meal_meal_type_id_index", "meal_type_id"),
+        Index("meal_updated_at_index", "updated_at"),
+    )
