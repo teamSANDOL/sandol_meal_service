@@ -108,7 +108,7 @@ async def restaurant_submit_approval(
         )
 
     submission.status = "approved"
-    submission.approver = current_user.id
+    submission.reviewer = current_user.id
 
     new_restaurant = Restaurant(
         name=submission.name,

@@ -76,12 +76,13 @@ class RestaurantSubmission(Base):
         nullable=False,
         server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
-    approver: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    approved_time: Mapped[Optional[datetime]] = mapped_column(
+    reviewer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reviewed_time: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
         server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
+    rejection_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
 
     is_campus: Mapped[bool] = mapped_column(Boolean, nullable=False)
