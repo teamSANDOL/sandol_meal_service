@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -5,7 +7,6 @@ from sqlalchemy.future import select
 from app.models.restaurants import OperatingHours, Restaurant, RestaurantSubmission
 from app.schemas.restaurants import (
     Location,
-    RestaurantRequest,
     RestaurantResponse,
     TimeRange,
 )
@@ -119,6 +120,7 @@ def validate_time_range(key: str, value: TimeRange):
     """TimeRange 유효성 검증"""
     value.to_datetime()
 
+    assert isinstance(value.start, datetime) and isinstance(value.end, datetime)
     if value.start >= value.end:
         raise HTTPException(
             status_code=400, detail=f"{key}의 시작 시간이 종료 시간보다 늦습니다."

@@ -59,8 +59,9 @@ class RestaurantSubmission(RestaurantSchema):
     submitter: int
     submitted_time: datetime
     id: int
-    approved_time: Optional[datetime] = None
-    approver: Optional[int] = None
+    reviewed_time: Optional[datetime] = None
+    reviewer: Optional[int] = None
+    rejection_message: Optional[str] = None
 
 
 class SubmissionResponse(BaseModel):
@@ -87,3 +88,6 @@ class UserSchema(BaseModel):
 
     class Config:
         extra = "allow"  # 정의되지 않은 필드도 허용
+
+class RejectRestaurantRequest(BaseModel):
+    message: str

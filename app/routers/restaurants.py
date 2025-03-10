@@ -1,9 +1,10 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi_pagination import Params, add_pagination, paginate
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from fastapi_pagination import Params, add_pagination, paginate
 
 from app.config import logger
 from app.models.restaurants import (
@@ -13,24 +14,25 @@ from app.models.restaurants import (
 )
 from app.models.user import User
 from app.schemas.base import BaseSchema
+from app.schemas.pagination import CustomPage
 from app.schemas.restaurants import (
     ApproverResponse,
     RestaurantRequest,
+    RestaurantResponse,
     SubmissionResponse,
     TimeRange,
     UserSchema,
+    RejectRestaurantRequest,
 )
 from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
-from app.schemas.restaurants import RestaurantResponse
-from app.utils.restaurants import (
-    fetch_operating_hours_dict,
-    build_location_schema,
-    get_submission_or_404,
-    get_restaurant_or_404,
-    build_operating_hours_entries,
-)
 from app.utils.db import get_admin_user, get_current_user, get_db
-from app.schemas.pagination import CustomPage
+from app.utils.restaurants import (
+    build_location_schema,
+    build_operating_hours_entries,
+    fetch_operating_hours_dict,
+    get_restaurant_or_404,
+    get_submission_or_404,
+)
 
 router = APIRouter(prefix="/restaurants")
 
@@ -161,7 +163,7 @@ async def restaurant_submit_approval(
 @router.post("/restaurants/{request_id}/rejection", status_code=204)
 async def restaurant_submit_rejection(
     request_id: int,
-    request_body: dict[str, Any],
+    request_body: RejectRestaurantRequest,
     db: AsyncSession = Depends(get_db),
     current_user: UserSchema = Depends(get_admin_user),
 ):
@@ -172,12 +174,9 @@ async def restaurant_submit_rejection(
             status_code=400, detail="해당 제출 요청은 이미 처리되었습니다."
         )
 
-    rejection_message = request_body.get("message")
+    rejection_message = request_body.message
     if not rejection_message:
-        raise HTTPException(
-            status_code=400, detail="거부 사유는 필수 입력 사항입니다."
-        )
-
+        raise HTTPException(status_code=400, detail="거부 사유는 필수 입력 사항입니다.")
 
     submission.status = "rejected"
     submission.reviewer = current_user.id
@@ -240,6 +239,9 @@ async def restaurant_submit_get(
         brunch_time=operating_hours_dict.get("brunch_time"),
         lunch_time=operating_hours_dict.get("lunch_time"),
         dinner_time=operating_hours_dict.get("dinner_time"),
+        reviewer=submission.reviewer,
+        reviewed_time=submission.reviewed_time,
+        rejection_message=submission.rejection_message,
     )
 
     return BaseSchema[RestaurantSubmissionSchema](data=response_data)
@@ -315,6 +317,61 @@ async def get_restaurant(
     )
 
     return BaseSchema[RestaurantResponse](data=response_data)
+
+
+@router.delete("/{restaurant_id}", status_code=204)
+async def delete_restaurant(
+    restaurant_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """DELETE /restaurants/{restaurant_id} 엔드포인트"""
+    logger.info(
+        "Delete request received for restaurant_id: %s by user: %s",
+        restaurant_id,
+        current_user.id,
+    )
+
+    restaurant = await get_restaurant_or_404(db, restaurant_id)
+
+    # 식당 삭제 권한 확인 (소유자만 가능)
+    if restaurant.owner != current_user.id:
+        logger.warning(
+            "User %s does not have permission to delete restaurant %s",
+            current_user.id,
+            restaurant_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="해당 식당을 삭제할 권한이 없습니다."
+        )
+
+    try:
+        # 운영 시간 한 번에 삭제
+        await db.execute(
+            delete(OperatingHours).where(OperatingHours.restaurant_id == restaurant_id)
+        )
+
+        # 식당 삭제
+        await db.execute(delete(Restaurant).where(Restaurant.id == restaurant_id))
+
+        # 트랜잭션 커밋
+        await db.commit()
+
+        logger.info(
+            "Restaurant %s deleted successfully by user %s",
+            restaurant_id,
+            current_user.id,
+        )
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(
+            "Error occurred while deleting restaurant %s by user %s: %s",
+            restaurant_id,
+            current_user.id,
+            e,
+        )
+        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
 
 
 @router.get("/", response_model=CustomPage[RestaurantResponse])
