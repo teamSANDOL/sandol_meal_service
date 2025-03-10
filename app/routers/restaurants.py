@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -42,6 +41,7 @@ async def restaurant_submit_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """POST /restaurants/requests 엔드포인트"""
     if request.location is None or request.opening_time is None:
         raise HTTPException(
             status_code=400, detail="location, opening_time 필드는 필수입니다."
@@ -88,7 +88,7 @@ async def restaurant_submit_request(
     except Exception as e:
         await db.rollback()
         logger.error("Submission 요청 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=500, detail="서버 내부 오류 발생")
+        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
 
     return BaseSchema[SubmissionResponse](
         data=SubmissionResponse(request_id=new_submission.id)
@@ -101,6 +101,7 @@ async def restaurant_submit_approval(
     db: AsyncSession = Depends(get_db),
     current_user: UserSchema = Depends(get_admin_user),
 ):
+    """POST /restaurants/{request_id}/approval 엔드포인트"""
     submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
@@ -150,11 +151,46 @@ async def restaurant_submit_approval(
     except Exception as e:
         await db.rollback()
         logger.error("Approval 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=500, detail="서버 내부 오류 발생")
+        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
 
     return BaseSchema[ApproverResponse](
         data=ApproverResponse(restaurant_id=new_restaurant.id)
     )
+
+
+@router.post("/restaurants/{request_id}/rejection", status_code=204)
+async def restaurant_submit_rejection(
+    request_id: int,
+    request_body: dict[str, Any],
+    db: AsyncSession = Depends(get_db),
+    current_user: UserSchema = Depends(get_admin_user),
+):
+    """POST /restaurants/{request_id}/rejection 엔드포인트"""
+    submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
+    if submission.status != "pending":
+        raise HTTPException(
+            status_code=400, detail="해당 제출 요청은 이미 처리되었습니다."
+        )
+
+    rejection_message = request_body.get("message")
+    if not rejection_message:
+        raise HTTPException(
+            status_code=400, detail="거부 사유는 필수 입력 사항입니다."
+        )
+
+
+    submission.status = "rejected"
+    submission.reviewer = current_user.id
+    submission.rejection_message = rejection_message
+
+    try:
+        db.add(submission)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        logger.error("Approval 처리 중 예외 발생: %s", e)
+        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
 
 
 @router.get("/requests/{request_id}")
