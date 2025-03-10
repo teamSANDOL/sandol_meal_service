@@ -1,9 +1,15 @@
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.models.restaurants import OperatingHours, Restaurant
-from app.schemas.restaurants import Location, RestaurantResponse
-from app.schemas.restaurants import TimeRange
+from app.models.restaurants import OperatingHours, Restaurant, RestaurantSubmission
+from app.schemas.restaurants import (
+    Location,
+    RestaurantRequest,
+    RestaurantResponse,
+    TimeRange,
+)
+from app.utils.times import get_datetime_by_string
 
 
 async def fetch_operating_hours_dict(
@@ -83,3 +89,66 @@ def build_restaurant_schema(
         lunch_time=operating_hours.get("lunch_time"),
         dinner_time=operating_hours.get("dinner_time"),
     )
+
+
+async def get_submission_or_404(
+    db: AsyncSession, request_id: int
+) -> RestaurantSubmission:
+    """Submission을 조회하고, 없으면 404 예외를 발생시킨다."""
+    result = await db.execute(
+        select(RestaurantSubmission).filter(RestaurantSubmission.id == request_id)
+    )
+    submission = result.scalars().first()
+    if not submission:
+        raise HTTPException(
+            status_code=404, detail="해당 제출 요청이 존재하지 않습니다."
+        )
+    return submission
+
+
+async def get_restaurant_or_404(db: AsyncSession, restaurant_id: int) -> Restaurant:
+    """Restaurant를 조회하고, 없으면 404 예외를 발생시킨다."""
+    result = await db.execute(select(Restaurant).filter(Restaurant.id == restaurant_id))
+    restaurant = result.scalars().first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="해당 식당이 존재하지 않습니다.")
+    return restaurant
+
+
+def validate_time_range(key: str, value: TimeRange):
+    """TimeRange 유효성 검증"""
+    value.to_datetime()
+
+    if value.start >= value.end:
+        raise HTTPException(
+            status_code=400, detail=f"{key}의 시작 시간이 종료 시간보다 늦습니다."
+        )
+    if not (
+        get_datetime_by_string("00:00")
+        <= value.start
+        <= get_datetime_by_string("23:59")
+    ) or not (
+        get_datetime_by_string("00:00") <= value.end <= get_datetime_by_string("23:59")
+    ):
+        raise HTTPException(
+            status_code=400, detail=f"{key}의 시간이 올바르지 않습니다."
+        )
+
+    value.to_string()
+    return OperatingHours(type=key, start_time=value.start, end_time=value.end)
+
+
+def build_operating_hours_entries(
+    operation_hours_dict, submission_id=None, restaurant_id=None
+):
+    """운영시간 리스트를 생성"""
+    operating_hours_entries = []
+
+    for key, value in operation_hours_dict.items():
+        if value:
+            entry = validate_time_range(key, value)
+            entry.submission_id = submission_id
+            entry.restaurant_id = restaurant_id
+            operating_hours_entries.append(entry)
+
+    return operating_hours_entries

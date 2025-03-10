@@ -2,14 +2,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
-from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.config import Config, logger
-from app.models.meals import Meal, MealType
-from app.models.restaurants import Restaurant
+from app.models.meals import Meal
 from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.meals import (
@@ -18,11 +16,20 @@ from app.schemas.meals import (
     MealRegister,
     MealRegisterResponse,
     MealResponse,
-    Timestamp,
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
 from app.utils.db import get_current_user, get_db
+from app.utils.meals import (
+    apply_date_filter,
+    check_restaurant_permission,
+    get_meal_type,
+    register_meal_transaction,
+    delete_meal_transaction,
+    update_meal_menu_transaction,
+    update_meal_menu,
+    delete_meal_menu,
+)
 
 router = APIRouter(prefix="/meals")
 
@@ -35,53 +42,26 @@ async def list_meals(
     params: Params = Depends(),
 ):
     """모든 식사 데이터를 반환합니다."""
+    logger.info("Fetching all meals with filters: start_date=%s, end_date=%s", start_date, end_date)
+
     query = (
         select(Meal)
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
 
-    # 문자열을 datetime.date로 변환
-    try:
-        start_date_dt = (
-            datetime.strptime(start_date, "%Y-%m-%d")
-            .replace(tzinfo=Config.TZ)
-            .astimezone(timezone.utc)
-            if start_date
-            else None
-        )
-        end_date_dt = (
-            datetime.strptime(end_date, "%Y-%m-%d")
-            .replace(tzinfo=Config.TZ)
-            .astimezone(timezone.utc)
-            if end_date
-            else None
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)"
-        )
-
-    # 날짜 필터링 적용
-    if start_date_dt and end_date_dt:
-        if start_date_dt > end_date_dt:
-            query = query.where(Meal.updated_at.between(end_date_dt, start_date_dt))
-        else:
-            query = query.where(Meal.updated_at.between(start_date_dt, end_date_dt))
-    elif start_date_dt:
-        query = query.where(Meal.updated_at >= start_date_dt)
-    elif end_date_dt:
-        query = query.where(Meal.updated_at <= end_date_dt)
+    query = await apply_date_filter(query, start_date, end_date)
 
     result = await db.execute(query)
     meals = result.scalars().all()
 
-    # ✅ Meal 객체를 MealResponse Pydantic 모델로 변환
+    logger.info("Retrieved %d meals", len(meals))
+
     response_data = [
         MealResponse(
             id=meal.id,
             menu=meal.menu,
-            meal_type=MealTypeSchema(meal.meal_type.name),  # MealType Enum을 str로 변환
+            meal_type=MealTypeSchema(meal.meal_type.name),
             restaurant_id=meal.restaurant_id,
             restaurant_name=meal.restaurant.name,
             registered_at=meal.registered_at,
@@ -99,16 +79,21 @@ async def get_meal(
     db: AsyncSession = Depends(get_db),
 ):
     """특정 식사 데이터를 반환합니다."""
+    logger.info("Fetching meal with id: %d", meal_id)
+
     result = await db.execute(
         select(Meal)
         .where(Meal.id == meal_id)
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
-    meal: Meal | None = result.scalars().first()
+    meal = result.scalars().first()
 
     if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=404, detail="Meal not found")
+
+    logger.info("Meal found: %d", meal.id)
 
     response_data = MealResponse(
         id=meal.id,
@@ -116,8 +101,8 @@ async def get_meal(
         meal_type=MealTypeSchema(meal.meal_type.name),
         restaurant_id=meal.restaurant_id,
         restaurant_name=meal.restaurant.name,
-        registered_at=meal.registered_at,  # Timestamp
-        updated_at=meal.updated_at,  # Timestamp
+        registered_at=meal.registered_at,
+        updated_at=meal.updated_at,
     )
 
     return BaseSchema[MealResponse](data=response_data)
@@ -132,6 +117,8 @@ async def list_meals_by_restaurant(
     params: Params = Depends(),
 ):
     """특정 식당의 모든 식사 데이터를 반환합니다."""
+    logger.info("Fetching meals for restaurant_id=%d with filters: start_date=%s, end_date=%s", restaurant_id, start_date, end_date)
+
     query = (
         select(Meal)
         .where(Meal.restaurant_id == restaurant_id)
@@ -139,42 +126,14 @@ async def list_meals_by_restaurant(
         .options(selectinload(Meal.meal_type))
     )
 
-    # 문자열을 datetime.date로 변환
-    try:
-        start_date_dt = (
-            datetime.strptime(start_date, "%Y-%m-%d")
-            .replace(tzinfo=Config.TZ)
-            .astimezone(timezone.utc)
-            if start_date
-            else None
-        )
-        end_date_dt = (
-            datetime.strptime(end_date, "%Y-%m-%d")
-            .replace(tzinfo=Config.TZ)
-            .astimezone(timezone.utc)
-            if end_date
-            else None
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)"
-        )
-
-    # 날짜 필터링 적용
-    if start_date_dt and end_date_dt:
-        if start_date_dt > end_date_dt:
-            query = query.where(Meal.updated_at.between(end_date_dt, start_date_dt))
-        else:
-            query = query.where(Meal.updated_at.between(start_date_dt, end_date_dt))
-    elif start_date_dt:
-        query = query.where(Meal.updated_at >= start_date_dt)
-    elif end_date_dt:
-        query = query.where(Meal.updated_at <= end_date_dt)
+    query = await apply_date_filter(query, start_date, end_date)
 
     result = await db.execute(query)
     meals = result.scalars().all()
 
-    response_data: list[MealResponse] = [
+    logger.info("Retrieved %d meals for restaurant_id=%d", len(meals), restaurant_id)
+
+    response_data = [
         MealResponse(
             id=meal.id,
             menu=meal.menu,
@@ -197,31 +156,19 @@ async def delete_meal(
     current_user: User = Depends(get_current_user),
 ):
     """특정 식사 데이터를 삭제합니다."""
+    logger.info("User %d attempting to delete meal %d", current_user.id, meal_id)
+
     result = await db.execute(select(Meal).where(Meal.id == meal_id))
-    meal: Meal | None = result.scalars().first()
+    meal = result.scalars().first()
 
     if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=404, detail="Meal not found")
 
-    # restaurant_id와 current_user.id를 사용해 db 조회
-    restaurant_result = await db.execute(
-        select(Restaurant).where(
-            Restaurant.id == meal.restaurant_id,
-            or_(
-                Restaurant.owner == current_user.id,
-                Restaurant.managers.any(User.id == current_user.id),
-            ),
-        )
-    )
-    restaurant: Restaurant | None = restaurant_result.scalars().first()
-    if not restaurant:
-        raise HTTPException(
-            status_code=404,
-            detail="Restaurant not found or you do not have permission to access it",
-        )
+    await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
+    await delete_meal_transaction(db, meal)
 
-    await db.delete(meal)
-    await db.commit()
+    logger.info("Meal %d successfully deleted by user %d", meal_id, current_user.id)
 
 
 @router.post("/{restaurant_id}")
@@ -232,29 +179,10 @@ async def register_meal(
     current_user: User = Depends(get_current_user),
 ):
     """식사를 등록합니다."""
-    # restaurant_id와 current_user.id를 사용해 db 조회
-    restaurant_result = await db.execute(
-        select(Restaurant).where(
-            Restaurant.id == restaurant_id,
-            or_(
-                Restaurant.owner == current_user.id,
-                Restaurant.managers.any(User.id == current_user.id),
-            ),
-        )
-    )
-    restaurant: Restaurant | None = restaurant_result.scalars().first()
-    if not restaurant:
-        raise HTTPException(
-            status_code=404,
-            detail="Restaurant not found or you do not have permission to access it",
-        )
+    logger.info("User %d attempting to register meal for restaurant %d", current_user.id, restaurant_id)
 
-    meal_type_result = await db.execute(
-        select(MealType).where(MealType.name == meal_register.meal_type)
-    )
-    meal_type = meal_type_result.scalars().first()
-    if not meal_type:
-        raise HTTPException(status_code=404, detail="Meal type not found")
+    await check_restaurant_permission(db, restaurant_id, current_user.id)
+    meal_type = await get_meal_type(db, meal_register.meal_type)
 
     new_meal = Meal(
         restaurant_id=restaurant_id,
@@ -262,18 +190,17 @@ async def register_meal(
         meal_type_id=meal_type.id,
     )
 
-    db.add(new_meal)
-    await db.commit()
-    await db.refresh(new_meal)
+    await register_meal_transaction(db, new_meal)
 
-    meal_type_enum = MealTypeSchema(meal_type.name)
-    time_stamp_schema = Timestamp.convert_to_kst(new_meal.registered_at)
+    logger.info("Meal %d successfully registered by user %d", new_meal.id, current_user.id)
+
     response_data = MealRegisterResponse(
         id=new_meal.id,
         restaurant_id=new_meal.restaurant_id,
-        meal_type=meal_type_enum,
+        meal_type=MealTypeSchema(meal_type.name),
         registered_at=new_meal.registered_at,
     )
+
     return BaseSchema[MealRegisterResponse](data=response_data)
 
 
@@ -285,56 +212,21 @@ async def delete_meal_menu(
     current_user: User = Depends(get_current_user),
 ):
     """특정 식사의 메뉴를 삭제합니다."""
-    logger.info(
-        f"Attempting to delete menu from meal_id: {meal_id} by user_id: {current_user.id}"
-    )
-    logger.debug(f"menu data received: {menu_delete}")
+    logger.info("User %d attempting to delete menu for meal %d", current_user.id, meal_id)
 
-    result = await db.execute(
-        select(Meal)
-        .where(Meal.id == meal_id)
-        .options(selectinload(Meal.restaurant))
-        .options(selectinload(Meal.meal_type))
-    )
-    meal: Meal | None = result.scalars().first()
+    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    meal = result.scalars().first()
 
     if not meal:
-        logger.error(f"Meal with id {meal_id} not found")
+        logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=404, detail="Meal not found")
 
-    logger.debug(f"Meal found: {meal}")
+    await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
 
-    if meal.restaurant.owner != current_user.id:
-        logger.error(
-            f"User {current_user.id} does not have permission to delete menu from meal {meal_id}"
-        )
-        raise HTTPException(
-            status_code=403, detail="You do not have permission to access it"
-        )
+    updated_menu = delete_meal_menu(meal, menu_delete.menu)
+    await update_meal_menu_transaction(db, meal, updated_menu)
 
-    logger.debug(
-        f"User {current_user.id} has permission to delete menu from meal {meal_id}"
-    )
-
-    menu_list = meal.menu.copy()
-    logger.debug(f"Current menu: {menu_list}")
-
-    if isinstance(menu_delete.menu, str) and menu_delete.menu in menu_list:
-        menu_list.remove(menu_delete.menu)
-        logger.info(f"Removed menu {menu_delete.menu} from meal {meal_id}")
-    else:
-        for menu in menu_delete.menu:
-            if menu in menu_list:
-                menu_list.remove(menu)
-                logger.info(f"Removed menu {menu} from meal {meal_id}")
-    meal.menu = menu_list.copy()
-    logger.debug(f"Updated menu_list: {menu_list}")
-
-    db.add(meal)
-    await db.commit()
-    await db.refresh(meal)
-    logger.info(f"Successfully deleted menus from meal {meal_id}")
-    logger.debug(f"Updated meal: {meal.menu}")
+    logger.info("Menu successfully deleted for meal %d", meal.id)
 
 
 @router.patch("/{meal_id}/menus")
@@ -345,58 +237,21 @@ async def edit_meal_menu(
     current_user: User = Depends(get_current_user),
 ):
     """특정 식사의 메뉴를 수정합니다."""
-    logger.info(
-        f"Attempting to edit menu from meal_id: {meal_id} by user_id: {current_user.id}"
-    )
-    logger.debug(f"menu data received: {menu_edit}")
+    logger.info("User %d attempting to edit menu for meal %d", current_user.id, meal_id)
 
-    result = await db.execute(
-        select(Meal)
-        .where(Meal.id == meal_id)
-        .options(selectinload(Meal.restaurant))
-        .options(selectinload(Meal.meal_type))
-    )
-    meal: Meal | None = result.scalars().first()
+    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    meal = result.scalars().first()
 
     if not meal:
-        logger.error(f"Meal with id {meal_id} not found")
+        logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=404, detail="Meal not found")
 
-    logger.debug(f"Meal found: {meal}")
+    await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
 
-    if meal.restaurant.owner != current_user.id:
-        if current_user.id in [manager.id for manager in meal.restaurant.managers]:
-            logger.info(f"User {current_user.id} is a manager of the restaurant")
-        else:
-            logger.error(
-                f"User {current_user.id} does not have permission to edit menu from meal {meal_id}"
-            )
-            raise HTTPException(
-                status_code=403, detail="You do not have permission to access it"
-            )
+    updated_menu = update_meal_menu(meal, menu_edit.menu)
+    await update_meal_menu_transaction(db, meal, updated_menu)
 
-    logger.debug(
-        f"User {current_user.id} has permission to edit menu from meal {meal_id}"
-    )
-
-    menu_list = meal.menu.copy()
-    logger.debug(f"Current menu: {menu_list}")
-
-    if isinstance(menu_edit.menu, str):
-        menu_list.append(menu_edit.menu)
-        logger.info(f"Added menu {menu_edit.menu} to meal {meal_id}")
-    else:
-        for menu in menu_edit.menu:
-            menu_list.append(menu)
-            logger.info(f"Added menu {menu} to meal {meal_id}")
-    meal.menu = menu_list.copy()
-    logger.debug(f"Updated menu_list: {menu_list}")
-
-    db.add(meal)
-    await db.commit()
-    await db.refresh(meal)
-    logger.info(f"Successfully edited menus from meal {meal_id}")
-    logger.debug(f"Updated meal: {meal.menu}")
+    logger.info("Menu successfully updated for meal %d", meal.id)
 
     response_data = MealEditResponse(
         id=meal.id,
