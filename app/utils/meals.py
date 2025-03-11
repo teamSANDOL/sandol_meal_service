@@ -124,10 +124,12 @@ async def update_meal_menu_transaction(db: AsyncSession, meal: Meal, updated_men
         raise HTTPException(status_code=500, detail="식사 메뉴 수정 중 오류가 발생했습니다.")
 
 
-def update_meal_menu(meal: Meal, menu_edit_list: list[str]) -> list[str]:
+def update_meal_menu(meal: Meal, menu_edit_list: str | list[str]) -> list[str]:
     """식사 메뉴를 수정하는 로직"""
     logger.debug("Updating menu for meal_id=%s. Current menu: %s", meal.id, meal.menu)
 
+    if isinstance(menu_edit_list, str):
+        menu_edit_list = [menu_edit_list]
     menu_list = meal.menu.copy()
     for menu in menu_edit_list:
         if menu not in menu_list:
@@ -137,10 +139,12 @@ def update_meal_menu(meal: Meal, menu_edit_list: list[str]) -> list[str]:
     return menu_list
 
 
-def delete_meal_menu(meal: Meal, menu_delete_list: list[str]) -> list[str]:
+def delete_meal_menu(meal: Meal, menu_delete_list: str| list[str]) -> list[str]:
     """식사 메뉴를 삭제하는 로직"""
     logger.debug("Deleting menu items from meal_id=%s. Current menu: %s", meal.id, meal.menu)
 
+    if isinstance(menu_delete_list, str):
+        menu_delete_list = [menu_delete_list]
     menu_list = meal.menu.copy()
     for menu in menu_delete_list:
         if menu in menu_list:

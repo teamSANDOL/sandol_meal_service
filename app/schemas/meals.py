@@ -1,7 +1,11 @@
+from typing import Annotated
+from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel
 
-from app.schemas.base import Timestamp
+from app.schemas.base import Timestamp as tsp
+
+Timestamp = Annotated[datetime, tsp]
 
 
 class MealType(str, Enum):
