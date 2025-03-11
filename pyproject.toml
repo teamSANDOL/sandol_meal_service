@@ -67,7 +67,7 @@ indent-width = 4
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "C", "D"]
+select = ["E", "F", "W", "C", "D", "R", "B", "N", "S", "PL"]
 ignore = ["E203", "E501", "D415", "D403"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
