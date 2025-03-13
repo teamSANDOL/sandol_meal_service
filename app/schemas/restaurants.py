@@ -1,4 +1,5 @@
 """이 모듈은 레스토랑 관련 데이터 스키마를 정의합니다.
+
 Pydantic BaseModel을 사용하여 데이터 유효성 검사를 수행합니다.
 """
 
@@ -22,16 +23,14 @@ class TimeRange(BaseModel):
     end: str | datetime  # "HH:MM" 형식
 
     def to_datetime(self):
-        """start와 end 속성을 문자열에서 datetime 객체로 변환합니다.
-        """
+        """start와 end 속성을 문자열에서 datetime 객체로 변환합니다."""
         if isinstance(self.start, str):
             self.start = get_datetime_by_string(self.start)
         if isinstance(self.end, str):
             self.end = get_datetime_by_string(self.end)
 
     def to_string(self):
-        """start와 end 속성을 datetime 객체에서 문자열로 변환합니다.
-        """
+        """start와 end 속성을 datetime 객체에서 문자열로 변환합니다."""
         if isinstance(self.start, datetime):
             self.start = self.start.strftime("%H:%M")
         if isinstance(self.end, datetime):
@@ -95,8 +94,7 @@ class RestaurantResponse(RestaurantSchema):
 
 
 class RestaurantRequest(RestaurantSchema):
-    """POST /restaurants/requests 엔드포인트 요청 바디를 나타내는 클래스입니다.
-    """
+    """POST /restaurants/requests 엔드포인트 요청 바디를 나타내는 클래스입니다."""
 
 
 class RestaurantSubmission(RestaurantSchema):
@@ -173,7 +171,8 @@ class UserSchema(BaseModel):
     last_login: Optional[datetime] = None
 
     class Config:
-        extra = "allow"  # 정의되지 않은 필드도 허용
+        """정의되지 않은 필드도 허용합니다."""
+        extra = "allow"
 
 
 class RejectRestaurantRequest(BaseModel):
