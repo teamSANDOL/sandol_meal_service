@@ -1,4 +1,29 @@
-from typing import Any
+"""식당 관리 API 모듈
+
+이 모듈은 FastAPI를 기반으로 식당 관련 CRUD API를 제공합니다.
+사용자는 식당을 등록, 승인, 거절, 조회, 삭제할 수 있으며,
+페이징을 지원하여 여러 식당을 효율적으로 조회할 수 있습니다.
+
+API 목록:
+    - `POST /restaurants/requests`: 새로운 식당 등록 요청을 생성합니다.
+    - `POST /restaurants/{request_id}/approval`: 식당 등록 요청을 승인합니다.
+    - `POST /restaurants/{request_id}/rejection`: 식당 등록 요청을 거절합니다.
+    - `GET /restaurants/requests/{request_id}`: 특정 식당 등록 요청을 조회합니다.
+    - `DELETE /restaurants/requests/{request_id}`: 특정 식당 등록 요청을 삭제합니다.
+    - `GET /restaurants/{restaurant_id}`: 특정 식당 정보를 조회합니다.
+    - `DELETE /restaurants/{restaurant_id}`: 특정 식당을 삭제합니다.
+    - `GET /restaurants/`: 모든 식당 데이터를 페이징하여 조회합니다.
+
+이 모듈은 다음과 같은 주요 유틸리티 함수를 활용합니다:
+    - `build_location_schema`: 위치 정보를 변환하는 함수
+    - `build_operating_hours_entries`: 운영시간 데이터를 변환하는 함수
+    - `fetch_operating_hours_dict`: 운영시간 데이터를 조회하는 함수
+    - `get_restaurant_or_404`: 특정 식당 정보를 조회하고 없을 경우 404 오류를 반환하는 함수
+    - `get_submission_or_404`: 특정 식당 등록 요청을 조회하고 없을 경우 404 오류를 반환하는 함수
+
+모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
+"""
+
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi_pagination import Params, add_pagination, paginate
@@ -33,6 +58,7 @@ from app.utils.restaurants import (
     get_restaurant_or_404,
     get_submission_or_404,
 )
+from typing import Annotated
 
 router = APIRouter(prefix="/restaurants")
 
@@ -40,10 +66,27 @@ router = APIRouter(prefix="/restaurants")
 @router.post("/requests")
 async def restaurant_submit_request(
     request: RestaurantRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """POST /restaurants/requests 엔드포인트"""
+    """새로운 식당 등록 요청을 생성합니다.
+
+    사용자는 식당 정보를 입력하여 등록 요청을 제출할 수 있으며,
+    관리자가 승인하기 전까지 `pending` 상태로 유지됩니다.
+    등록 요청에는 기본적인 식당 정보(이름, 위치, 운영시간 등)가 포함됩니다.
+
+    Args:
+        request (RestaurantRequest): 새로 등록할 식당 정보를 포함한 요청 객체입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Returns:
+        BaseSchema[SubmissionResponse]: 제출된 요청 정보를 포함한 응답 객체입니다.
+
+    Raises:
+        HTTPException(400): `location` 또는 `opening_time`이 누락된 경우 발생합니다.
+        HTTPException(500): 서버 내부 오류로 인해 요청 처리가 실패한 경우 발생합니다.
+    """
     if request.location is None or request.opening_time is None:
         raise HTTPException(
             status_code=400, detail="location, opening_time 필드는 필수입니다."
@@ -100,10 +143,27 @@ async def restaurant_submit_request(
 @router.post("/restaurants/{request_id}/approval")
 async def restaurant_submit_approval(
     request_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserSchema = Depends(get_admin_user),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserSchema, Depends(get_admin_user)],
 ):
-    """POST /restaurants/{request_id}/approval 엔드포인트"""
+    """식당 등록 요청을 승인합니다.
+
+    관리자는 `pending` 상태의 식당 등록 요청을 승인하여 실제 식당 데이터로 저장할 수 있습니다.
+    승인된 식당은 `restaurants` 테이블에 저장되며, 요청의 운영시간도 함께 복사됩니다.
+
+    Args:
+        request_id (int): 승인할 식당 등록 요청의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (UserSchema): 현재 요청을 보낸 관리자 사용자 객체입니다.
+
+    Returns:
+        BaseSchema[ApproverResponse]: 승인된 식당 정보를 포함한 응답 객체입니다.
+
+    Raises:
+        HTTPException(400): 요청이 이미 승인되었거나 거절된 경우 발생합니다.
+        HTTPException(404): 해당 요청을 찾을 수 없는 경우 발생합니다.
+        HTTPException(500): 서버 내부 오류로 인해 승인 처리가 실패한 경우 발생합니다.
+    """
     submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
@@ -164,10 +224,26 @@ async def restaurant_submit_approval(
 async def restaurant_submit_rejection(
     request_id: int,
     request_body: RejectRestaurantRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserSchema = Depends(get_admin_user),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserSchema, Depends(get_admin_user)],
 ):
-    """POST /restaurants/{request_id}/rejection 엔드포인트"""
+    """식당 등록 요청을 거절합니다.
+
+    관리자는 `pending` 상태의 식당 등록 요청을 거절할 수 있습니다.
+    거절된 요청은 `rejected` 상태로 변경되며, 거절 사유(`rejection_message`)를 입력해야 합니다.
+
+    Args:
+        request_id (int): 거절할 식당 등록 요청의 고유 ID입니다.
+        request_body (RejectRestaurantRequest): 거절 사유를 포함한 요청 객체입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (UserSchema): 현재 요청을 보낸 관리자 사용자 객체입니다.
+
+    Raises:
+        HTTPException(400): 요청이 이미 승인되었거나 거절된 경우 발생합니다.
+        HTTPException(404): 해당 요청을 찾을 수 없는 경우 발생합니다.
+        HTTPException(400): 거절 사유가 입력되지 않은 경우 발생합니다.
+        HTTPException(500): 서버 내부 오류로 인해 거절 처리가 실패한 경우 발생합니다.
+    """
     submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
@@ -195,10 +271,24 @@ async def restaurant_submit_rejection(
 @router.get("/requests/{request_id}")
 async def restaurant_submit_get(
     request_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """GET /restaurants/requests/{request_id} 엔드포인트"""
+    """특정 식당 등록 요청을 조회합니다.
+
+    사용자는 `request_id`를 이용하여 해당 요청의 상태 및 세부 정보를 확인할 수 있습니다.
+
+    Args:
+        request_id (int): 조회할 식당 등록 요청의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Returns:
+        BaseSchema[RestaurantSubmissionSchema]: 요청된 식당 등록 정보를 포함한 응답 객체입니다.
+
+    Raises:
+        HTTPException(404): 해당 요청을 찾을 수 없는 경우 발생합니다.
+    """
     logger.info(
         "Get request received for submission_id: %s by user: %s",
         request_id,
@@ -250,10 +340,23 @@ async def restaurant_submit_get(
 @router.delete("/requests/{request_id}", status_code=204)
 async def restaurant_submit_delete(
     request_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """DELETE /restaurants/requests/{submission_id} 엔드포인트"""
+    """특정 식당 등록 요청을 삭제합니다.
+
+    요청자가 자신의 `pending` 상태인 등록 요청을 삭제할 수 있습니다.
+    승인되거나 거절된 요청은 삭제할 수 없습니다.
+
+    Args:
+        request_id (int): 삭제할 식당 등록 요청의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Raises:
+        HTTPException(403): 요청을 삭제할 권한이 없는 경우 발생합니다.
+        HTTPException(404): 해당 요청을 찾을 수 없는 경우 발생합니다.
+    """
     logger.info(
         "Delete request received for submission_id: %s by user: %s",
         request_id,
@@ -279,9 +382,22 @@ async def restaurant_submit_delete(
 @router.get("/{restaurant_id}")
 async def get_restaurant(
     restaurant_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """GET /restaurants/{restaurant_id} 엔드포인트"""
+    """특정 식당 정보를 조회합니다.
+
+    `restaurant_id`를 이용하여 해당 식당의 기본 정보와 운영 시간을 조회합니다.
+
+    Args:
+        restaurant_id (int): 조회할 식당의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+
+    Returns:
+        BaseSchema[RestaurantResponse]: 조회된 식당 정보를 포함한 응답 객체입니다.
+
+    Raises:
+        HTTPException(404): 해당 식당을 찾을 수 없는 경우 발생합니다.
+    """
     logger.info("Get request received for restaurant_id: %s", restaurant_id)
 
     restaurant = await get_restaurant_or_404(db, restaurant_id)
@@ -322,10 +438,24 @@ async def get_restaurant(
 @router.delete("/{restaurant_id}", status_code=204)
 async def delete_restaurant(
     restaurant_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """DELETE /restaurants/{restaurant_id} 엔드포인트"""
+    """특정 식당을 삭제합니다.
+
+    식당 소유자는 본인이 등록한 식당을 삭제할 수 있습니다.
+    식당 삭제 시 운영시간 정보도 함께 삭제됩니다.
+
+    Args:
+        restaurant_id (int): 삭제할 식당의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Raises:
+        HTTPException(403): 해당 식당을 삭제할 권한이 없는 경우 발생합니다.
+        HTTPException(404): 해당 식당을 찾을 수 없는 경우 발생합니다.
+        HTTPException(500): 서버 내부 오류로 인해 삭제 처리가 실패한 경우 발생합니다.
+    """
     logger.info(
         "Delete request received for restaurant_id: %s by user: %s",
         restaurant_id,
@@ -376,9 +506,17 @@ async def delete_restaurant(
 
 @router.get("/", response_model=CustomPage[RestaurantResponse])
 async def get_restaurants(
-    db: AsyncSession = Depends(get_db), params: Params = Depends()
+    db: Annotated[AsyncSession, Depends(get_db)], params: Annotated[Params, Depends()]
 ):
-    """모든 업체 데이터를 반환합니다."""
+    """모든 식당 데이터를 페이징하여 조회합니다.
+
+    Args:
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
+
+    Returns:
+        CustomPage[RestaurantResponse]: 식당 데이터 목록을 포함한 페이징된 응답 객체입니다.
+    """
     # 1️⃣ SQLAlchemy ORM 객체 가져오기
     result = await db.execute(select(Restaurant))
     restaurants = result.scalars().all()
