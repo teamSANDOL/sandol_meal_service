@@ -1,4 +1,8 @@
-"""FastAPI 앱의 설정을 정의하는 모듈입니다."""
+"""FastAPI 앱의 설정을 정의하는 모듈입니다.
+
+이 모듈은 환경 변수를 로드하고, 로깅을 설정하며, FastAPI 애플리케이션의 설정 값을 관리하는 Config 클래스를 제공합니다.
+또한, meal_types.json 파일에서 식사 유형을 불러오는 기능도 포함되어 있습니다.
+"""
 
 import os
 import logging
@@ -38,7 +42,11 @@ logger.addHandler(console_handler)
 
 
 class Config:
-    """FastAPI 설정 값을 관리하는 클래스"""
+    """FastAPI 설정 값을 관리하는 클래스
+
+    이 클래스는 환경 변수에서 설정 값을 로드하고, 기본 값을 제공합니다.
+    또한, meal_types.json 파일에서 식사 유형을 불러오는 기능도 포함되어 있습니다.
+    """
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user_service:8000")
@@ -48,14 +56,22 @@ class Config:
 
     @staticmethod
     def get_meal_types_file():
-        """meal_types.json 파일 경로 반환"""
+        """meal_types.json 파일 경로 반환
+
+        Returns:
+            str: meal_types.json 파일의 절대 경로
+        """
         return os.path.join(
             CONFIG_DIR, os.getenv("MEAL_TYPES_FILE_NAME", "meal_types.json")
         )
 
     @staticmethod
     def load_meal_types():
-        """meal_types.json에서 식사 유형을 불러옴"""
+        """meal_types.json에서 식사 유형을 불러옴
+
+        Returns:
+            list: meal_types.json 파일에서 불러온 식사 유형 리스트. 파일이 없거나 손상된 경우 빈 리스트 반환.
+        """
         meal_types_file = Config.get_meal_types_file()
         try:
             with open(meal_types_file, "r", encoding="utf-8") as file:

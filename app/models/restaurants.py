@@ -1,3 +1,7 @@
+"""이 모듈은 식당(Restaurant) 및 관련 데이터베이스 모델을 정의합니다.
+식당 정보, 식당 제출 정보, 운영 시간 등의 클래스를 포함합니다.
+"""
+
 from __future__ import annotations
 from typing import List, Optional
 from datetime import datetime, timezone
@@ -19,7 +23,24 @@ from app.models.associations import restaurant_manager_association
 
 
 class Restaurant(Base):
-    """식당 정보를 저장하는 클래스"""
+    """식당 정보를 저장하는 클래스
+
+    Attributes:
+        id (int): 식당의 고유 식별자
+        name (str): 식당 이름
+        owner (int): 식당 소유자의 사용자 ID
+        is_campus (bool): 캠퍼스 내 식당 여부
+        establishment_type (str): 식당 유형
+        building_name (Optional[str]): 건물 이름
+        naver_map_link (Optional[str]): 네이버 지도 링크
+        kakao_map_link (Optional[str]): 카카오 지도 링크
+        latitude (Optional[float]): 위도
+        longitude (Optional[float]): 경도
+        owner_user (User): 소유자 사용자 객체
+        managers (List[User]): 식당 관리자 사용자 객체 목록
+        operating_hours (List[OperatingHours]): 운영 시간 객체 목록
+        meals (List[Meal]): 식사 객체 목록
+    """
 
     __tablename__ = "Restaurant"
 
@@ -61,7 +82,27 @@ class Restaurant(Base):
 
 
 class RestaurantSubmission(Base):
-    """식당 정보 제출을 관리하는 클래스"""
+    """식당 정보 제출을 관리하는 클래스
+
+    Attributes:
+        id (int): 제출의 고유 식별자
+        name (str): 제출된 식당 이름
+        status (str): 제출 상태("pending", "approved", "rejected")
+        submitter (int): 제출자 사용자 ID
+        submitted_time (datetime): 제출 시간
+        reviewer (Optional[int]): 검토자 사용자 ID
+        reviewed_time (Optional[datetime]): 검토 시간
+        rejection_message (Optional[str]): 거절 메시지
+        establishment_type (str): 식당 유형
+        is_campus (bool): 캠퍼스 내 식당 여부
+        building_name (Optional[str]): 건물 이름
+        naver_map_link (Optional[str]): 네이버 지도 링크
+        kakao_map_link (Optional[str]): 카카오 지도 링크
+        latitude (Optional[float]): 위도
+        longitude (Optional[float]): 경도
+        submitter_user (User): 제출자 사용자 객체
+        operating_hours (List[OperatingHours]): 운영 시간 객체 목록
+    """
 
     __tablename__ = "Restaurant_submission"
 
@@ -110,7 +151,18 @@ class RestaurantSubmission(Base):
 
 
 class OperatingHours(Base):
-    """식당의 운영시간을 저장하는 클래스"""
+    """식당의 운영시간을 저장하는 클래스
+
+    Attributes:
+        id (int): 운영 시간의 고유 식별자
+        type (str): 운영 시간 유형
+        start_time (str): 시작 시간
+        end_time (str): 종료 시간
+        restaurant_id (Optional[int]): 연결된 식당의 ID
+        submission_id (Optional[int]): 연결된 제출의 ID
+        restaurant (Restaurant): 연결된 식당 객체
+        restaurant_submission (RestaurantSubmission): 연결된 식당 등록 신청 객체
+    """
 
     __tablename__ = "operating_hours"
 

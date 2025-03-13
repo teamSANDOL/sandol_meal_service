@@ -1,3 +1,8 @@
+"""이 모듈은 식단 정보와 관련된 SQLAlchemy 모델을 정의합니다.
+
+여기에는 식사 유형과 식단 정보를 저장하는 클래스가 포함됩니다.
+"""
+
 from __future__ import annotations
 from typing import List
 from datetime import datetime, timezone
@@ -19,7 +24,12 @@ from app.models.restaurants import Restaurant
 
 
 class NonEscapedJSON(TypeDecorator):
-    """한글이 유니코드로 저장되지 않도록 하는 JSON 타입"""
+    """한글이 유니코드로 저장되지 않도록 하는 JSON 타입을 정의하는 클래스.
+
+    Methods:
+        process_bind_param(value, dialect): DB에 저장하기 전 변환 (한글이 유니코드 이스케이프 되지 않도록 설정)
+        process_result_value(value, dialect): DB에서 가져올 때 변환
+    """
 
     impl = JSON
 
@@ -37,7 +47,12 @@ class NonEscapedJSON(TypeDecorator):
 
 
 class MealType(Base):
-    """식사 유형을 저장하는 클래스 (예: breakfast, brunch, lunch, dinner)"""
+    """식사 유형을 저장하는 클래스 (예: breakfast, brunch, lunch, dinner).
+
+    Attributes:
+        id (int): 식사 유형의 고유 ID.
+        name (str): 식사 유형의 이름.
+    """
 
     __tablename__ = "meal_type"
 
@@ -47,7 +62,18 @@ class MealType(Base):
 
 
 class Meal(Base):
-    """식단 정보를 저장하는 클래스"""
+    """식단 정보를 저장하는 클래스.
+
+    Attributes:
+        id (int): 식단의 고유 ID.
+        restaurant_id (int): 식단이 속한 레스토랑의 ID.
+        menu (List[str]): 식단의 메뉴 리스트.
+        registered_at (datetime): 식단이 등록된 시간.
+        updated_at (datetime): 식단이 마지막으로 업데이트된 시간.
+        meal_type_id (int): 식사 유형의 ID.
+        restaurant (Restaurant): 식단이 속한 레스토랑 객체와의 관계.
+        meal_type (MealType): 식단의 식사 유형 객체와의 관계.
+    """
 
     __tablename__ = "meal"
 
