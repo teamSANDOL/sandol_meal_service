@@ -25,6 +25,7 @@ ruff = "^0.9"
 black = "^25.1.0"
 mypy = "^1.15.0"
 types-cachetools = "^5.5.0.20240820"
+types-pytz = "^2025.1.0.20250204"
 
 [build-system]
 requires = ["poetry-core"]
@@ -58,7 +59,8 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
-    "docs"
+    "docs",
+    "alembic"
 ]
 
 line-length = 88
