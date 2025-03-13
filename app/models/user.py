@@ -1,5 +1,5 @@
-"""이 모듈은 사용자 정보를 저장하는 User 클래스를 정의합니다.
-"""
+# ruff: noqa: F821
+"""이 모듈은 사용자 정보를 저장하는 User 클래스를 정의합니다."""
 
 from typing import List
 

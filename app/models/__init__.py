@@ -1,3 +1,4 @@
+"""init file for models module."""
 from app.models.meals import (
     NonEscapedJSON,
     MealType,

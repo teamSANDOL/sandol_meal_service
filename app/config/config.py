@@ -54,6 +54,8 @@ class Config:
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
 
+    MIN_TEST_USERS = 2
+
     @staticmethod
     def get_meal_types_file():
         """meal_types.json 파일 경로 반환

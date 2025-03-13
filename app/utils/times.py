@@ -1,3 +1,4 @@
+"""시간과 관련된 유틸리티 함수를 제공합니다."""
 from datetime import datetime
 
 from app.config import Config
@@ -18,6 +19,6 @@ def get_now_string() -> str:
     return get_string_by_datetime(datetime.now())
 
 
-def get_now_timestamp() -> int:
+def get_now_timestamp() -> str:
     """현재 시간을 iso8081형식의 문자열로 반환합니다."""
     return datetime.now().astimezone(Config.TZ).isoformat()

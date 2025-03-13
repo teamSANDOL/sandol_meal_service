@@ -18,9 +18,9 @@ from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel
 
-from app.schemas.base import Timestamp as tsp
+from app.schemas.base import Timestamp as Tsp
 
-Timestamp = Annotated[datetime, tsp]
+Timestamp = Annotated[datetime, Tsp]
 
 
 class MealType(str, Enum):

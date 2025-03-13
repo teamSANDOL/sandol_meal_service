@@ -56,7 +56,7 @@ async def root():
 
 
 if __name__ == "__main__":
-    HOST = "0.0.0.0"
+    HOST = "0.0.0.0"  # noqa: S104
     PORT = 5600
     logger.info("Starting Sandol server on %s:%s", HOST, PORT)
     uvicorn.run("main:app", host=HOST, port=PORT, reload=True)

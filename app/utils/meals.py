@@ -1,3 +1,8 @@
+"""식사 관련 유틸리티 함수 모음
+
+이 모듈은 식사 관련 데이터베이스 트랜잭션 및 헬퍼 함수들을 포함하고 있습니다.
+"""
+
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy import or_, Select
@@ -10,7 +15,19 @@ from app.models.user import User
 
 
 async def apply_date_filter(query: Select, start_date: str | None, end_date: str | None) -> Select:
-    """날짜 필터링을 적용하는 헬퍼 함수"""
+    """날짜 필터링을 적용하는 헬퍼 함수
+
+    Args:
+        query (Select): SQLAlchemy Select 객체.
+        start_date (str | None): 필터링할 시작 날짜 (YYYY-MM-DD 형식).
+        end_date (str | None): 필터링할 종료 날짜 (YYYY-MM-DD 형식).
+
+    Returns:
+        Select: 날짜 필터링이 적용된 SQLAlchemy Select 객체.
+
+    Raises:
+        HTTPException: 날짜 형식이 올바르지 않은 경우.
+    """
     logger.debug("apply_date_filter called with start_date=%s, end_date=%s", start_date, end_date)
 
     try:
@@ -22,9 +39,9 @@ async def apply_date_filter(query: Select, start_date: str | None, end_date: str
             datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=Config.TZ).astimezone(timezone.utc)
             if end_date else None
         )
-    except ValueError:
+    except ValueError as exc:
         logger.warning("Invalid date format received: start_date=%s, end_date=%s", start_date, end_date)
-        raise HTTPException(status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)")
+        raise HTTPException(status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)") from exc
 
     if start_date_dt and end_date_dt:
         if start_date_dt > end_date_dt:
@@ -42,7 +59,19 @@ async def apply_date_filter(query: Select, start_date: str | None, end_date: str
 
 
 async def check_restaurant_permission(db: AsyncSession, restaurant_id: int, user_id: int) -> Restaurant:
-    """사용자가 특정 식당에 대한 권한을 가지고 있는지 확인하는 헬퍼 함수"""
+    """사용자가 특정 식당에 대한 권한을 가지고 있는지 확인하는 헬퍼 함수
+
+    Args:
+        db (AsyncSession): SQLAlchemy 비동기 세션 객체.
+        restaurant_id (int): 확인할 식당의 ID.
+        user_id (int): 확인할 사용자의 ID.
+
+    Returns:
+        Restaurant: 사용자가 접근 권한을 가진 식당 객체.
+
+    Raises:
+        HTTPException: 사용자가 식당에 접근할 권한이 없는 경우.
+    """
     logger.debug("Checking permission for user %s on restaurant %s", user_id, restaurant_id)
 
     result = await db.execute(
@@ -65,7 +94,18 @@ async def check_restaurant_permission(db: AsyncSession, restaurant_id: int, user
 
 
 async def get_meal_type(db: AsyncSession, meal_type_name: str) -> MealType:
-    """식사 유형(MealType)을 가져오는 헬퍼 함수"""
+    """식사 유형(MealType)을 가져오는 헬퍼 함수
+
+    Args:
+        db (AsyncSession): SQLAlchemy 비동기 세션 객체.
+        meal_type_name (str): 가져올 식사 유형의 이름.
+
+    Returns:
+        MealType: 요청한 이름의 식사 유형 객체.
+
+    Raises:
+        HTTPException: 요청한 이름의 식사 유형을 찾을 수 없는 경우.
+    """
     logger.debug("Fetching MealType: %s", meal_type_name)
 
     meal_type_result = await db.execute(select(MealType).where(MealType.name == meal_type_name))
@@ -80,7 +120,15 @@ async def get_meal_type(db: AsyncSession, meal_type_name: str) -> MealType:
 
 
 async def register_meal_transaction(db: AsyncSession, new_meal: Meal):
-    """식사를 등록하는 트랜잭션 처리"""
+    """식사를 등록하는 트랜잭션 처리
+
+    Args:
+        db (AsyncSession): SQLAlchemy 비동기 세션 객체.
+        new_meal (Meal): 등록할 새로운 식사 객체.
+
+    Raises:
+        HTTPException: 식사 등록 중 오류가 발생한 경우.
+    """
     logger.info("Registering meal: %s", new_meal)
 
     try:
@@ -91,11 +139,19 @@ async def register_meal_transaction(db: AsyncSession, new_meal: Meal):
     except Exception as e:
         await db.rollback()
         logger.error("Meal 등록 중 에러 발생: %s", e)
-        raise HTTPException(status_code=500, detail="식사 등록 중 오류가 발생했습니다.")
+        raise HTTPException(status_code=500, detail="식사 등록 중 오류가 발생했습니다.") from e
 
 
 async def delete_meal_transaction(db: AsyncSession, meal: Meal):
-    """식사를 삭제하는 트랜잭션 처리"""
+    """식사를 삭제하는 트랜잭션 처리
+
+    Args:
+        db (AsyncSession): SQLAlchemy 비동기 세션 객체.
+        meal (Meal): 삭제할 식사 객체.
+
+    Raises:
+        HTTPException: 식사 삭제 중 오류가 발생한 경우.
+    """
     logger.info("Deleting meal: %s", meal.id)
 
     try:
@@ -105,11 +161,20 @@ async def delete_meal_transaction(db: AsyncSession, meal: Meal):
     except Exception as e:
         await db.rollback()
         logger.error("Meal 삭제 중 에러 발생: %s", e)
-        raise HTTPException(status_code=500, detail="식사 삭제 중 오류가 발생했습니다.")
+        raise HTTPException(status_code=500, detail="식사 삭제 중 오류가 발생했습니다.") from e
 
 
 async def update_meal_menu_transaction(db: AsyncSession, meal: Meal, updated_menu: list[str]):
-    """식사 메뉴를 수정하는 트랜잭션 처리"""
+    """식사 메뉴를 수정하는 트랜잭션 처리
+
+    Args:
+        db (AsyncSession): SQLAlchemy 비동기 세션 객체.
+        meal (Meal): 수정할 식사 객체.
+        updated_menu (list[str]): 업데이트할 메뉴 리스트.
+
+    Raises:
+        HTTPException: 식사 메뉴 수정 중 오류가 발생한 경우.
+    """
     logger.info("Updating meal menu for meal_id=%s with new menu: %s", meal.id, updated_menu)
 
     try:
@@ -121,11 +186,19 @@ async def update_meal_menu_transaction(db: AsyncSession, meal: Meal, updated_men
     except Exception as e:
         await db.rollback()
         logger.error("Meal 메뉴 수정 중 에러 발생: %s", e)
-        raise HTTPException(status_code=500, detail="식사 메뉴 수정 중 오류가 발생했습니다.")
+        raise HTTPException(status_code=500, detail="식사 메뉴 수정 중 오류가 발생했습니다.") from e
 
 
 def update_meal_menu(meal: Meal, menu_edit_list: str | list[str]) -> list[str]:
-    """식사 메뉴를 수정하는 로직"""
+    """식사 메뉴를 수정하는 로직
+
+    Args:
+        meal (Meal): 수정할 식사 객체.
+        menu_edit_list (str | list[str]): 추가할 메뉴 항목(들).
+
+    Returns:
+        list[str]: 수정된 메뉴 리스트.
+    """
     logger.debug("Updating menu for meal_id=%s. Current menu: %s", meal.id, meal.menu)
 
     if isinstance(menu_edit_list, str):
@@ -140,7 +213,15 @@ def update_meal_menu(meal: Meal, menu_edit_list: str | list[str]) -> list[str]:
 
 
 def delete_meal_menu(meal: Meal, menu_delete_list: str| list[str]) -> list[str]:
-    """식사 메뉴를 삭제하는 로직"""
+    """식사 메뉴를 삭제하는 로직
+
+    Args:
+        meal (Meal): 수정할 식사 객체.
+        menu_delete_list (str | list[str]): 삭제할 메뉴 항목(들).
+
+    Returns:
+        list[str]: 수정된 메뉴 리스트.
+    """
     logger.debug("Deleting menu items from meal_id=%s. Current menu: %s", meal.id, meal.menu)
 
     if isinstance(menu_delete_list, str):
