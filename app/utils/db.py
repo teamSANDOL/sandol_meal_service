@@ -80,6 +80,16 @@ async def get_user_info(
     response.raise_for_status()
     return UserSchema.model_validate(response.json(), strict=False)
 
+async def is_global_admin(user_id: int, client: Annotated[AsyncClient, Depends(get_async_client)]) -> bool:
+    """User API 서버에 요청하여 global_admin 여부 확인"""
+    response = await client.get(f"http://user-api-service/users/{user_id}/is_global_admin")
+
+    try:
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
+
+    return response.json().get("is_global_admin", False)
 
 async def check_admin_user(
     user: Annotated[UserSchema, Depends(get_current_user)],
