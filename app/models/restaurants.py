@@ -1,11 +1,10 @@
-# ruff: noqa: F821
 """이 모듈은 식당(Restaurant) 및 관련 데이터베이스 모델을 정의합니다.
 
 식당 정보, 식당 제출 정보, 운영 시간 등의 클래스를 포함합니다.
 """
 
 from __future__ import annotations
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -22,6 +21,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.associations import restaurant_manager_association
+
+if TYPE_CHECKING:
+    from app.models.user import User
+    from app.models.meals import Meal
 
 
 class Restaurant(Base):
