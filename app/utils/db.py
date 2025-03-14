@@ -67,9 +67,9 @@ async def get_user_info(
     Raises:
         HTTPException: 사용자 정보 조회 실패 시
     """
-    if Config.debug:
+    if Config.debug and user_id == 1:  # noqa: PLR2004
         return UserSchema(
-            id=2,
+            id=1,
             is_admin=True,
             name="테스트 사용자",
             email="ident@example.com",
@@ -85,6 +85,8 @@ async def get_user_info(
 
 async def is_global_admin(user_id: int, client: Annotated[AsyncClient, Depends(get_async_client)]) -> bool:
     """User API 서버에 요청하여 global_admin 여부 확인"""
+    if Config.debug:
+        return user_id == 1
     response = await client.get(f"http://user-api-service/users/{user_id}/is_global_admin")
 
     try:
