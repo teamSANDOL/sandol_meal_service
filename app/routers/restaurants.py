@@ -56,14 +56,16 @@ from app.utils.restaurants import (
     build_operating_hours_entries,
     fetch_operating_hours_dict,
     get_restaurant_or_404,
+    get_restaurant_with_permission,
     get_submission_or_404,
+    get_submission_with_permission,
 )
 from typing import Annotated
 
 router = APIRouter(prefix="/restaurants")
 
 
-@router.post("/requests")
+@router.post("/requests", status_code=Config.HttpStatus.CREATED)
 async def restaurant_submit_request(
     request: RestaurantRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -143,6 +145,7 @@ async def restaurant_submit_request(
 @router.post("/restaurants/{request_id}/approval")
 async def restaurant_submit_approval(
     request_id: int,
+    submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserSchema, Depends(get_admin_user)],
 ):
@@ -153,6 +156,7 @@ async def restaurant_submit_approval(
 
     Args:
         request_id (int): 승인할 식당 등록 요청의 고유 ID입니다.
+        submission (RestaurantSubmission): 승인할 제출 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         current_user (UserSchema): 현재 요청을 보낸 관리자 사용자 객체입니다.
 
@@ -164,7 +168,6 @@ async def restaurant_submit_approval(
         HTTPException(404): 해당 요청을 찾을 수 없는 경우 발생합니다.
         HTTPException(500): 서버 내부 오류로 인해 승인 처리가 실패한 경우 발생합니다.
     """
-    submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
             status_code=Config.HttpStatus.BAD_REQUEST, detail="해당 제출 요청은 이미 처리되었습니다."
@@ -223,6 +226,7 @@ async def restaurant_submit_approval(
 @router.post("/restaurants/{request_id}/rejection", status_code=Config.HttpStatus.NO_CONTENT)
 async def restaurant_submit_rejection(
     request_id: int,
+    submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
     request_body: RejectRestaurantRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[UserSchema, Depends(get_admin_user)],
@@ -234,6 +238,7 @@ async def restaurant_submit_rejection(
 
     Args:
         request_id (int): 거절할 식당 등록 요청의 고유 ID입니다.
+        submission (RestaurantSubmission): 거절할 제출 요청 객체입니다.
         request_body (RejectRestaurantRequest): 거절 사유를 포함한 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         current_user (UserSchema): 현재 요청을 보낸 관리자 사용자 객체입니다.
@@ -244,7 +249,6 @@ async def restaurant_submit_rejection(
         HTTPException(400): 거절 사유가 입력되지 않은 경우 발생합니다.
         HTTPException(500): 서버 내부 오류로 인해 거절 처리가 실패한 경우 발생합니다.
     """
-    submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
             status_code=Config.HttpStatus.BAD_REQUEST, detail="해당 제출 요청은 이미 처리되었습니다."
@@ -271,6 +275,7 @@ async def restaurant_submit_rejection(
 @router.get("/requests/{request_id}")
 async def restaurant_submit_get(
     request_id: int,
+    submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
@@ -280,6 +285,7 @@ async def restaurant_submit_get(
 
     Args:
         request_id (int): 조회할 식당 등록 요청의 고유 ID입니다.
+        submission (RestaurantSubmission): 조회된 제출 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
@@ -295,9 +301,6 @@ async def restaurant_submit_get(
         current_user.id,
     )
 
-    submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
-
-    logger.info("Submission with id %s found", request_id)
 
     operating_hours_dict = await fetch_operating_hours_dict(
         db, submission_id=request_id
@@ -340,6 +343,7 @@ async def restaurant_submit_get(
 @router.delete("/requests/{request_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def restaurant_submit_delete(
     request_id: int,
+    submission: Annotated[RestaurantSubmission, Depends(get_submission_with_permission)],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
@@ -350,6 +354,7 @@ async def restaurant_submit_delete(
 
     Args:
         request_id (int): 삭제할 식당 등록 요청의 고유 ID입니다.
+        submission (RestaurantSubmission): 조회된 제출 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
@@ -363,17 +368,6 @@ async def restaurant_submit_delete(
         current_user.id,
     )
 
-    submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
-    if submission.submitter != current_user.id:
-        logger.warning(
-            "User %s does not have permission to delete submission with id %s",
-            current_user.id,
-            request_id,
-        )
-        raise HTTPException(
-            status_code=403, detail="해당 제출 요청을 삭제할 권한이 없습니다."
-        )
-
     await db.delete(submission)
     await db.commit()
     logger.info("Submission with id %s deleted successfully", request_id)
@@ -382,6 +376,7 @@ async def restaurant_submit_delete(
 @router.get("/{restaurant_id}")
 async def get_restaurant(
     restaurant_id: int,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """특정 식당 정보를 조회합니다.
@@ -390,6 +385,7 @@ async def get_restaurant(
 
     Args:
         restaurant_id (int): 조회할 식당의 고유 ID입니다.
+        restaurant (Restaurant): 조회된 식당 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
 
     Returns:
@@ -398,10 +394,6 @@ async def get_restaurant(
     Raises:
         HTTPException(404): 해당 식당을 찾을 수 없는 경우 발생합니다.
     """
-    logger.info("Get request received for restaurant_id: %s", restaurant_id)
-
-    restaurant = await get_restaurant_or_404(db, restaurant_id)
-
     operating_hours_dict = await fetch_operating_hours_dict(
         db, restaurant_id=restaurant_id
     )
@@ -438,6 +430,7 @@ async def get_restaurant(
 @router.delete("/{restaurant_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def delete_restaurant(
     restaurant_id: int,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_with_permission)],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
@@ -448,6 +441,7 @@ async def delete_restaurant(
 
     Args:
         restaurant_id (int): 삭제할 식당의 고유 ID입니다.
+        restaurant (Restaurant): 조회된 식당 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
@@ -461,19 +455,6 @@ async def delete_restaurant(
         restaurant_id,
         current_user.id,
     )
-
-    restaurant = await get_restaurant_or_404(db, restaurant_id)
-
-    # 식당 삭제 권한 확인 (소유자만 가능)
-    if restaurant.owner != current_user.id:
-        logger.warning(
-            "User %s does not have permission to delete restaurant %s",
-            current_user.id,
-            restaurant_id,
-        )
-        raise HTTPException(
-            status_code=403, detail="해당 식당을 삭제할 권한이 없습니다."
-        )
 
     try:
         # 운영 시간 한 번에 삭제

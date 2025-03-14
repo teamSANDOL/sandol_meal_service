@@ -5,13 +5,11 @@
 
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from sqlalchemy import or_, Select
+from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.config import Config, logger
 from app.models.meals import Meal, MealType
-from app.models.restaurants import Restaurant
-from app.models.user import User
 
 
 async def apply_date_filter(query: Select, start_date: str | None, end_date: str | None) -> Select:
@@ -56,41 +54,6 @@ async def apply_date_filter(query: Select, start_date: str | None, end_date: str
 
     logger.debug("Query after applying date filter: %s", query)
     return query
-
-
-async def check_restaurant_permission(db: AsyncSession, restaurant_id: int, user_id: int) -> Restaurant:
-    """사용자가 특정 식당에 대한 권한을 가지고 있는지 확인하는 헬퍼 함수
-
-    Args:
-        db (AsyncSession): SQLAlchemy 비동기 세션 객체.
-        restaurant_id (int): 확인할 식당의 ID.
-        user_id (int): 확인할 사용자의 ID.
-
-    Returns:
-        Restaurant: 사용자가 접근 권한을 가진 식당 객체.
-
-    Raises:
-        HTTPException: 사용자가 식당에 접근할 권한이 없는 경우.
-    """
-    logger.debug("Checking permission for user %s on restaurant %s", user_id, restaurant_id)
-
-    result = await db.execute(
-        select(Restaurant).where(
-            Restaurant.id == restaurant_id,
-            or_(
-                Restaurant.owner == user_id,
-                Restaurant.managers.any(User.id == user_id),
-            ),
-        )
-    )
-    restaurant = result.scalars().first()
-
-    if not restaurant:
-        logger.warning("User %s has no permission for restaurant %s", user_id, restaurant_id)
-        raise HTTPException(status_code=403, detail="해당 식당에 접근할 권한이 없습니다.")
-
-    logger.info("Permission granted for user %s on restaurant %s", user_id, restaurant_id)
-    return restaurant
 
 
 async def get_meal_type(db: AsyncSession, meal_type_name: str) -> MealType:

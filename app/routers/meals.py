@@ -51,7 +51,6 @@ from app.schemas.pagination import CustomPage
 from app.utils.db import get_current_user, get_db
 from app.utils.meals import (
     apply_date_filter,
-    check_restaurant_permission,
     get_meal_type,
     register_meal_transaction,
     delete_meal_transaction,
@@ -59,6 +58,7 @@ from app.utils.meals import (
     update_meal_menu,
     delete_meal_menu,
 )
+from app.utils.restaurants import get_restaurant_with_permission
 
 router = APIRouter(prefix="/meals")
 
@@ -258,6 +258,7 @@ async def delete_meal(
     """
     logger.info("User %d attempting to delete meal %d", current_user.id, meal_id)
 
+    # ✅ 1️⃣ Meal 조회
     result = await db.execute(select(Meal).where(Meal.id == meal_id))
     meal = result.scalars().first()
 
@@ -265,9 +266,11 @@ async def delete_meal(
         logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=404, detail="Meal not found")
 
-    await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
-    await delete_meal_transaction(db, meal)
+    # ✅ 2️⃣ `get_restaurant_with_permission()` 활용 → **권한 검증 & 레스토랑 객체 반환**
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
+    # ✅ 3️⃣ Meal 삭제 트랜잭션 실행
+    await delete_meal_transaction(db, meal)
     logger.info("Meal %d successfully deleted by user %d", meal_id, current_user.id)
 
 
@@ -302,7 +305,7 @@ async def register_meal(
         restaurant_id,
     )
 
-    await check_restaurant_permission(db, restaurant_id, current_user.id)
+    await get_restaurant_with_permission(restaurant_id, db, current_user)
     meal_type = await get_meal_type(db, meal_register.meal_type)
 
     new_meal = Meal(
@@ -361,7 +364,7 @@ async def delete_menu(
         logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
 
-    await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
     updated_menu = delete_meal_menu(meal, menu_delete.menu)
     await update_meal_menu_transaction(db, meal, updated_menu)
@@ -404,7 +407,7 @@ async def edit_meal_menu(
         logger.warning("Meal with id %d not found", meal_id)
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
 
-    await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
     updated_menu = update_meal_menu(meal, menu_edit.menu)
     await update_meal_menu_transaction(db, meal, updated_menu)

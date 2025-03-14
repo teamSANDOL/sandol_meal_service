@@ -77,7 +77,10 @@ async def get_user_info(
             updated_at=datetime.fromisoformat("2021-08-01T00:00:00"),
         )
     response = await client.get(f"{Config.USER_SERVICE_URL}/users/{user_id}")
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail=str(e)) from e
     return UserSchema.model_validate(response.json(), strict=False)
 
 async def is_global_admin(user_id: int, client: Annotated[AsyncClient, Depends(get_async_client)]) -> bool:
@@ -92,12 +95,14 @@ async def is_global_admin(user_id: int, client: Annotated[AsyncClient, Depends(g
     return response.json().get("is_global_admin", False)
 
 async def check_admin_user(
-    user: Annotated[UserSchema, Depends(get_current_user)],
-) -> UserSchema:
+    user: Annotated[User, Depends(get_current_user)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
+) -> bool:
     """사용자가 관리자 권한을 가지고 있는지 확인합니다.
 
     Args:
         user (UserSchema): 사용자 정보가 담긴 스키마 객체
+        client (AsyncClient): 비동기 HTTP
 
     Returns:
         UserSchema: 관리자 권한이 확인된 사용자 스키마 객체
@@ -105,9 +110,9 @@ async def check_admin_user(
     Raises:
         HTTPException: 사용자가 관리자 권한이 없는 경우
     """
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
-    return user
+    if user.meal_admin or await is_global_admin(user.id, client):
+        return True
+    raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="관리자 권한이 필요합니다.")
 
 
 async def get_admin_user(
@@ -129,5 +134,5 @@ async def get_admin_user(
         HTTPException: X-User-ID 헤더가 없거나 사용자가 존재하지 않는 경우
     """
     user = await get_current_user(x_user_id, db)
-    user_info = await get_user_info(user.id, client)
-    return await check_admin_user(user_info)
+    await check_admin_user(user, client)
+    return user

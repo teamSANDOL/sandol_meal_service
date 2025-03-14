@@ -2,19 +2,23 @@
 
 이 모듈은 식당과 관련된 다양한 유틸리티 함수들을 포함하고 있습니다.
 """
-
+from typing import Annotated
 from datetime import datetime
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Depends
+from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.models.user import User
 from app.models.restaurants import OperatingHours, Restaurant, RestaurantSubmission
 from app.schemas.restaurants import (
     Location,
     RestaurantResponse,
     TimeRange,
+    UserSchema
 )
+from app.utils.db import get_db, check_admin_user, get_current_user
 from app.utils.times import get_datetime_by_string
 from app.config import logger, Config
 
@@ -138,7 +142,7 @@ def build_restaurant_schema(
 
 
 async def get_submission_or_404(
-    db: AsyncSession, request_id: int
+    request_id: int, db: Annotated[AsyncSession, Depends(get_db)],
 ) -> RestaurantSubmission:
     """Submission을 조회하고, 없으면 404 예외를 발생시킨다.
 
@@ -160,10 +164,59 @@ async def get_submission_or_404(
         raise HTTPException(
             status_code=Config.HttpStatus.NOT_FOUND, detail="해당 제출 요청이 존재하지 않습니다."
         )
+    logger.info("Submission with id %s found", request_id)
+    logger.debug("Submission: %s", submission)
     return submission
 
 
-async def get_restaurant_or_404(db: AsyncSession, restaurant_id: int) -> Restaurant:
+async def get_submission_with_permission(
+    request_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> RestaurantSubmission:
+    """제출 요청을 조회하면서, 존재 여부와 권한을 개별적으로 검증하는 함수.
+
+    - 제출 요청이 존재하지 않으면 404 반환.
+    - 사용자가 해당 제출 요청을 작성했거나, 관리자 권한이 있으면 반환.
+    - 요청이 존재하지만 권한이 없으면 403 반환.
+
+    Args:
+        request_id (int): 요청 ID.
+        db (AsyncSession): 비동기 DB 세션.
+        current_user (User): 현재 사용자.
+
+    Returns:
+        RestaurantSubmission: 조회된 제출 요청 객체.
+
+    Raises:
+        HTTPException(404): 제출 요청이 존재하지 않을 때.
+        HTTPException(403): 제출 요청이 존재하지만, 권한이 없을 때.
+    """
+    # 1️⃣ ✅ **제출 요청 존재 여부 확인** (권한 상관없이)
+    result = await db.execute(
+        select(RestaurantSubmission)
+        .filter(RestaurantSubmission.id == request_id)
+        .options(joinedload(RestaurantSubmission.submitter_user))
+    )
+    submission = result.scalars().first()
+
+    if submission is None:
+        logger.warning("Submission not found: %s", request_id)
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 제출 요청을 찾을 수 없습니다.")
+
+    # 2️⃣ ✅ **권한 확인 (작성자 or 관리자)**
+    if submission.submitter == current_user.id or await check_admin_user(current_user):  # type: ignore
+        logger.info("Permission granted for user %s on submission %s", current_user.id, request_id)
+        return submission
+
+    # 3️⃣ ✅ **요청이 존재하지만 권한이 없는 경우**
+    raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="해당 제출 요청에 대한 권한이 없습니다.")
+
+
+async def get_restaurant_or_404(
+        db: Annotated[AsyncSession, Depends(get_db)],
+        restaurant_id: int
+        ) -> Restaurant:
     """Restaurant를 조회하고, 없으면 404 예외를 발생시킨다.
 
     Args:
@@ -176,11 +229,62 @@ async def get_restaurant_or_404(db: AsyncSession, restaurant_id: int) -> Restaur
     Raises:
         HTTPException: 식당 객체가 존재하지 않을 때 발생.
     """
+    logger.info("Get request received for restaurant_id: %s", restaurant_id)
+
     result = await db.execute(select(Restaurant).filter(Restaurant.id == restaurant_id))
     restaurant = result.scalars().first()
     if not restaurant:
         raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 식당이 존재하지 않습니다.")
     return restaurant
+
+async def get_restaurant_with_permission(
+    restaurant_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Restaurant:
+    """식당을 조회하면서, 동시에 사용자 권한을 확인하는 함수.
+
+    - 식당이 존재하지 않으면 404 반환.
+    - 사용자가 식당 소유자, 관리자이거나 전역 관리자 권한이 있으면 반환.
+    - 식당이 존재하지만 권한이 없으면 403 반환.
+
+    Args:
+        restaurant_id (int): 조회할 식당 ID.
+        db (AsyncSession): 비동기 데이터베이스 세션.
+        current_user (User): 현재 사용자 객체.
+
+    Returns:
+        Restaurant: 조회된 식당 객체.
+
+    Raises:
+        HTTPException(404): 해당 식당이 존재하지 않을 경우.
+        HTTPException(403): 식당이 존재하지만 접근 권한이 없는 경우.
+    """
+    logger.info("Checking permission for user %s on restaurant %s", current_user.id, restaurant_id)
+
+    # ✅ 1️⃣ 식당 존재 여부 확인
+    result = await db.execute(
+        select(Restaurant)
+        .filter(Restaurant.id == restaurant_id)
+        .options(joinedload(Restaurant.managers))  # managers 관계 미리 로드
+    )
+    restaurant = result.scalars().first()
+
+    if restaurant is None:
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 식당이 존재하지 않습니다.")
+
+    # ✅ 2️⃣ 사용자가 관리자이거나 식당 소유자 또는 관리자인 경우 접근 허용
+    if (
+        restaurant.owner == current_user.id
+        or any(manager.id == current_user.id for manager in restaurant.managers)
+        or await check_admin_user(current_user)  # type: ignore
+    ):
+        logger.info("Permission granted for user %s on restaurant %s", current_user.id, restaurant_id)
+        return restaurant
+
+    # ✅ 3️⃣ 식당이 존재하지만 접근 권한이 없는 경우
+    logger.warning("User %s has no permission for restaurant %s", current_user.id, restaurant_id)
+    raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="해당 식당에 접근할 권한이 없습니다.")
 
 
 def validate_time_range(key: str, value: TimeRange):
