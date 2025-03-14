@@ -31,7 +31,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.config import logger
+from app.config import logger, Config
 from app.models.restaurants import (
     OperatingHours,
     Restaurant,
@@ -89,7 +89,7 @@ async def restaurant_submit_request(
     """
     if request.location is None or request.opening_time is None:
         raise HTTPException(
-            status_code=400, detail="location, opening_time 필드는 필수입니다."
+            status_code=Config.HttpStatus.BAD_REQUEST, detail="location, opening_time 필드는 필수입니다."
         )
 
     new_submission = RestaurantSubmission(
@@ -133,7 +133,7 @@ async def restaurant_submit_request(
     except Exception as e:
         await db.rollback()
         logger.error("Submission 요청 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
 
     return BaseSchema[SubmissionResponse](
         data=SubmissionResponse(request_id=new_submission.id)
@@ -167,7 +167,7 @@ async def restaurant_submit_approval(
     submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
-            status_code=400, detail="해당 제출 요청은 이미 처리되었습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST, detail="해당 제출 요청은 이미 처리되었습니다."
         )
 
     submission.status = "approved"
@@ -213,14 +213,14 @@ async def restaurant_submit_approval(
     except Exception as e:
         await db.rollback()
         logger.error("Approval 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
 
     return BaseSchema[ApproverResponse](
         data=ApproverResponse(restaurant_id=new_restaurant.id)
     )
 
 
-@router.post("/restaurants/{request_id}/rejection", status_code=204)
+@router.post("/restaurants/{request_id}/rejection", status_code=Config.HttpStatus.NO_CONTENT)
 async def restaurant_submit_rejection(
     request_id: int,
     request_body: RejectRestaurantRequest,
@@ -247,12 +247,12 @@ async def restaurant_submit_rejection(
     submission: RestaurantSubmission = await get_submission_or_404(db, request_id)
     if submission.status != "pending":
         raise HTTPException(
-            status_code=400, detail="해당 제출 요청은 이미 처리되었습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST, detail="해당 제출 요청은 이미 처리되었습니다."
         )
 
     rejection_message = request_body.message
     if not rejection_message:
-        raise HTTPException(status_code=400, detail="거부 사유는 필수 입력 사항입니다.")
+        raise HTTPException(status_code=Config.HttpStatus.BAD_REQUEST, detail="거부 사유는 필수 입력 사항입니다.")
 
     submission.status = "rejected"
     submission.reviewer = current_user.id
@@ -265,7 +265,7 @@ async def restaurant_submit_rejection(
     except Exception as e:
         await db.rollback()
         logger.error("Approval 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
 
 
 @router.get("/requests/{request_id}")
@@ -337,7 +337,7 @@ async def restaurant_submit_get(
     return BaseSchema[RestaurantSubmissionSchema](data=response_data)
 
 
-@router.delete("/requests/{request_id}", status_code=204)
+@router.delete("/requests/{request_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def restaurant_submit_delete(
     request_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -435,7 +435,7 @@ async def get_restaurant(
     return BaseSchema[RestaurantResponse](data=response_data)
 
 
-@router.delete("/{restaurant_id}", status_code=204)
+@router.delete("/{restaurant_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def delete_restaurant(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -501,7 +501,7 @@ async def delete_restaurant(
             current_user.id,
             e,
         )
-        raise HTTPException(status_code=500, detail="서버 내부 오류 발생") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
 
 
 @router.get("/", response_model=CustomPage[RestaurantResponse])

@@ -35,7 +35,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from typing import Annotated
 
-from app.config import logger
+from app.config import logger, Config
 from app.models.meals import Meal
 from app.models.user import User
 from app.schemas.base import BaseSchema
@@ -155,7 +155,7 @@ async def get_meal(
 
     if not meal:
         logger.warning("Meal with id %d not found", meal_id)
-        raise HTTPException(status_code=404, detail="Meal not found")
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
 
     logger.info("Meal found: %d", meal.id)
 
@@ -236,7 +236,7 @@ async def list_meals_by_restaurant(
     return paginate(response_data, params)
 
 
-@router.delete("/{meal_id}", status_code=204)
+@router.delete("/{meal_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def delete_meal(
     meal_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -271,7 +271,7 @@ async def delete_meal(
     logger.info("Meal %d successfully deleted by user %d", meal_id, current_user.id)
 
 
-@router.post("/{restaurant_id}")
+@router.post("/{restaurant_id}", status_code=Config.HttpStatus.CREATED)
 async def register_meal(
     restaurant_id: int,
     meal_register: MealRegister,
@@ -327,7 +327,7 @@ async def register_meal(
     return BaseSchema[MealRegisterResponse](data=response_data)
 
 
-@router.delete("/{meal_id}/menus", status_code=204)
+@router.delete("/{meal_id}/menus", status_code=Config.HttpStatus.NO_CONTENT)
 async def delete_menu(
     meal_id: int,
     menu_delete: MenuEdit,
@@ -359,7 +359,7 @@ async def delete_menu(
 
     if not meal:
         logger.warning("Meal with id %d not found", meal_id)
-        raise HTTPException(status_code=404, detail="Meal not found")
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
 
     await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
 
@@ -402,7 +402,7 @@ async def edit_meal_menu(
 
     if not meal:
         logger.warning("Meal with id %d not found", meal_id)
-        raise HTTPException(status_code=404, detail="Meal not found")
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
 
     await check_restaurant_permission(db, meal.restaurant_id, current_user.id)
 

@@ -41,7 +41,7 @@ async def apply_date_filter(query: Select, start_date: str | None, end_date: str
         )
     except ValueError as exc:
         logger.warning("Invalid date format received: start_date=%s, end_date=%s", start_date, end_date)
-        raise HTTPException(status_code=400, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)") from exc
+        raise HTTPException(status_code=Config.HttpStatus.BAD_REQUEST, detail="날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)") from exc
 
     if start_date_dt and end_date_dt:
         if start_date_dt > end_date_dt:
@@ -113,7 +113,7 @@ async def get_meal_type(db: AsyncSession, meal_type_name: str) -> MealType:
 
     if not meal_type:
         logger.warning("MealType not found: %s", meal_type_name)
-        raise HTTPException(status_code=404, detail="Meal type not found")
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal type not found")
 
     logger.info("MealType found: %s", meal_type.name)
     return meal_type
@@ -139,7 +139,7 @@ async def register_meal_transaction(db: AsyncSession, new_meal: Meal):
     except Exception as e:
         await db.rollback()
         logger.error("Meal 등록 중 에러 발생: %s", e)
-        raise HTTPException(status_code=500, detail="식사 등록 중 오류가 발생했습니다.") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="식사 등록 중 오류가 발생했습니다.") from e
 
 
 async def delete_meal_transaction(db: AsyncSession, meal: Meal):
@@ -161,7 +161,7 @@ async def delete_meal_transaction(db: AsyncSession, meal: Meal):
     except Exception as e:
         await db.rollback()
         logger.error("Meal 삭제 중 에러 발생: %s", e)
-        raise HTTPException(status_code=500, detail="식사 삭제 중 오류가 발생했습니다.") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="식사 삭제 중 오류가 발생했습니다.") from e
 
 
 async def update_meal_menu_transaction(db: AsyncSession, meal: Meal, updated_menu: list[str]):
@@ -186,7 +186,7 @@ async def update_meal_menu_transaction(db: AsyncSession, meal: Meal, updated_men
     except Exception as e:
         await db.rollback()
         logger.error("Meal 메뉴 수정 중 에러 발생: %s", e)
-        raise HTTPException(status_code=500, detail="식사 메뉴 수정 중 오류가 발생했습니다.") from e
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="식사 메뉴 수정 중 오류가 발생했습니다.") from e
 
 
 def update_meal_menu(meal: Meal, menu_edit_list: str | list[str]) -> list[str]:

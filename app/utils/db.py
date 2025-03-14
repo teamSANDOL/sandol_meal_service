@@ -41,13 +41,13 @@ async def get_current_user(
         HTTPException: X-User-ID 헤더가 없거나 사용자가 존재하지 않는 경우
     """
     if x_user_id is None:
-        raise HTTPException(status_code=401, detail="X-User-ID 헤더가 필요합니다.")
+        raise HTTPException(status_code=Config.HttpStatus.UNAUTHORIZED, detail="X-User-ID 헤더가 필요합니다.")
 
     result = await db.execute(select(User).filter(User.id == x_user_id))
     user = result.scalars().first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="해당 사용자가 존재하지 않습니다.")
+        raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="해당 사용자가 존재하지 않습니다.")
 
     return user
 

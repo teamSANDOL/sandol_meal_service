@@ -16,6 +16,7 @@ from app.schemas.restaurants import (
     TimeRange,
 )
 from app.utils.times import get_datetime_by_string
+from app.config import logger, Config
 
 
 async def fetch_operating_hours_dict(
@@ -157,7 +158,7 @@ async def get_submission_or_404(
     submission = result.scalars().first()
     if not submission:
         raise HTTPException(
-            status_code=404, detail="해당 제출 요청이 존재하지 않습니다."
+            status_code=Config.HttpStatus.NOT_FOUND, detail="해당 제출 요청이 존재하지 않습니다."
         )
     return submission
 
@@ -178,7 +179,7 @@ async def get_restaurant_or_404(db: AsyncSession, restaurant_id: int) -> Restaur
     result = await db.execute(select(Restaurant).filter(Restaurant.id == restaurant_id))
     restaurant = result.scalars().first()
     if not restaurant:
-        raise HTTPException(status_code=404, detail="해당 식당이 존재하지 않습니다.")
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 식당이 존재하지 않습니다.")
     return restaurant
 
 
@@ -198,10 +199,10 @@ def validate_time_range(key: str, value: TimeRange):
     value.to_datetime()
 
     if not (isinstance(value.start, datetime) and isinstance(value.end, datetime)):
-        raise HTTPException(status_code=400, detail=f"{key}의 시간이 올바르지 않습니다.")
+        raise HTTPException(status_code=Config.HttpStatus.BAD_REQUEST, detail=f"{key}의 시간이 올바르지 않습니다.")
     if value.start >= value.end:
         raise HTTPException(
-            status_code=400, detail=f"{key}의 시작 시간이 종료 시간보다 늦습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST, detail=f"{key}의 시작 시간이 종료 시간보다 늦습니다."
         )
     if not (
         get_datetime_by_string("00:00")
@@ -211,7 +212,7 @@ def validate_time_range(key: str, value: TimeRange):
         get_datetime_by_string("00:00") <= value.end <= get_datetime_by_string("23:59")
     ):
         raise HTTPException(
-            status_code=400, detail=f"{key}의 시간이 올바르지 않습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST, detail=f"{key}의 시간이 올바르지 않습니다."
         )
 
     value.to_string()

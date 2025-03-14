@@ -56,6 +56,19 @@ class Config:
 
     MIN_TEST_USERS = 2
 
+    class HttpStatus:
+        """HTTP 상태 코드를 정의하는 클래스"""
+
+        OK = 200
+        CREATED = 201
+        NO_CONTENT = 204
+        BAD_REQUEST = 400
+        UNAUTHORIZED = 401
+        FORBIDDEN = 403
+        NOT_FOUND = 404
+        CONFLICT = 409
+        INTERNAL_SERVER_ERROR = 500
+
     @staticmethod
     def get_meal_types_file():
         """meal_types.json 파일 경로 반환
