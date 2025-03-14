@@ -71,8 +71,11 @@ async def sync_test_users():
             if user_count < Config.MIN_TEST_USERS:
                 new_users = [
                     User()
-                    for i in range(2 - user_count)
+                    for i in range(3 - user_count)
                 ]
+                if user_count == 0:
+                    new_users[0].meal_admin = True
+
                 db.add_all(new_users)
                 await db.commit()
                 logger.info("DEBUG 모드 활성화: 임의 사용자 %s명 추가됨", len(new_users))
