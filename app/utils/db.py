@@ -25,8 +25,8 @@ async def get_db():
 
 
 async def get_current_user(
-    x_user_id: Annotated[int, Header(None)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    x_user_id: int = Header(None),
 ) -> User:
     """X-User-ID 헤더를 가져와 비동기 방식으로 User 객체를 반환합니다.
 
@@ -118,9 +118,9 @@ async def check_admin_user(
 
 
 async def get_admin_user(
-    x_user_id: Annotated[int, Header(None)],
     db: Annotated[AsyncSession, Depends(get_db)],
     client: Annotated[AsyncClient, Depends(get_async_client)],
+    x_user_id: int = Header(None),
 ) -> UserSchema:
     """현재 사용자가 관리자 권한을 가지고 있는지 확인하고 UserSchema 객체를 반환합니다.
 
