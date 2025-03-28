@@ -3,6 +3,7 @@ from datetime import datetime
 
 from fastapi import Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from httpx import AsyncClient
 from typing import Annotated
@@ -14,6 +15,7 @@ from app.config import Config
 from app.utils.http import get_async_client
 
 
+
 async def get_db():
     """비동기 데이터베이스 세션을 생성하고 반환합니다.
 
@@ -23,9 +25,40 @@ async def get_db():
     async with AsyncSessionLocal() as db:
         yield db
 
+async def get_or_create_user(
+    user_id: int,
+    db: AsyncSession,
+    client: AsyncClient,
+) -> User:
+    """DB에서 사용자 조회, 없으면 외부에서 받아와 생성"""
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalars().first()
+    if user:
+        return user
+
+    try:
+        user_info: UserSchema = await get_user_info(user_id, client)
+        user = User(id=user_info.id)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return user
+    except IntegrityError:
+        await db.rollback()
+        # 다른 트랜잭션에서 먼저 추가되었을 수 있음 → 재조회
+        result = await db.execute(select(User).filter(User.id == user_id))
+        user = result.scalars().first()
+        if user:
+            return user
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="사용자 추가 중 예외 발생")
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail=str(e))
+
 
 async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     x_user_id: int = Header(None),
 ) -> User:
     """X-User-ID 헤더를 가져와 비동기 방식으로 User 객체를 반환합니다.
@@ -33,6 +66,7 @@ async def get_current_user(
     Args:
         x_user_id (int): 요청 헤더에서 가져온 사용자 ID
         db (AsyncSession): 비동기 데이터베이스 세션
+        client: AsyncClient: 비동기 HTTP 클라이언트
 
     Returns:
         User: 데이터베이스에서 조회된 사용자 객체
@@ -42,14 +76,8 @@ async def get_current_user(
     """
     if x_user_id is None:
         raise HTTPException(status_code=Config.HttpStatus.UNAUTHORIZED, detail="X-User-ID 헤더가 필요합니다.")
+    return await get_or_create_user(x_user_id, db, client)
 
-    result = await db.execute(select(User).filter(User.id == x_user_id))
-    user = result.scalars().first()
-
-    if not user:
-        raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="해당 사용자가 존재하지 않습니다.")
-
-    return user
 
 
 async def get_user_info(
