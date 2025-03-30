@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.config import Config
+from app.config import Config, logger
 from app.database import AsyncSessionLocal
 from app.models.user import User  # User 모델이 models 디렉토리에 있다고 가정
 from app.schemas.restaurants import UserSchema
@@ -37,12 +37,24 @@ async def get_or_create_user(
     if user:
         return user
 
+    logger.info("사용자 정보 없음, 외부 API에서 사용자 정보 조회")
     try:
         user_info: UserSchema = await get_user_info(user_id, client)
         user = User(id=user_info.id)
         db.add(user)
         await db.commit()
         await db.refresh(user)
+        logger.info("사용자 정보 DB에 추가 완료")
+        logger.debug(
+            "사용자 정보 DB에 추가 완료 %s",
+            {
+                "id": user.id,
+                "email": user_info.email,
+                "name": user_info.name,
+                "global_admin": user_info.global_admin,
+                "created_at": user_info.created_at,
+            },
+        )
         return user
     except IntegrityError as e:
         await db.rollback()
@@ -113,7 +125,7 @@ async def get_user_info(
             created_at=datetime.fromisoformat("2021-08-01T00:00:00"),
             updated_at=datetime.fromisoformat("2021-08-01T00:00:00"),
         )
-    response = await client.get(f"{Config.USER_SERVICE_URL}/users/{user_id}")
+    response = await client.get(f"{Config.USER_SERVICE_URL}user/api/users/{user_id}/")
     try:
         response.raise_for_status()
     except Exception as e:
@@ -128,7 +140,7 @@ async def is_global_admin(user_id: int, client: AsyncClient) -> bool:
     if Config.debug:
         return user_id == 1
     response = await client.get(
-        f"http://user-api-service/users/{user_id}/is_global_admin"
+        f"{Config.USER_SERVICE_URL}user/api/users/{user_id}/is_global_admin/"
     )
 
     try:

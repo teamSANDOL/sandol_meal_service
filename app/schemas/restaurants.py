@@ -154,21 +154,17 @@ class UserSchema(BaseModel):
         id (int): 사용자 ID
         name (str): 사용자 이름
         email (str): 사용자 이메일
-        is_admin (bool): 관리자 여부
-        is_active (bool): 활성화 여부
+        global_admin (bool) = 전역 관리자 여부
+        service_account (bool) = 서비스 API 계정 여부
         created_at (datetime): 생성 시간
-        updated_at (datetime): 업데이트 시간
-        last_login (Optional[datetime]): 마지막 로그인 시간
     """
 
     id: int
     name: str
     email: str
-    is_admin: bool = False
-    is_active: bool = True
+    global_admin: bool = False
+    service_account: bool = False
     created_at: datetime
-    updated_at: datetime
-    last_login: Optional[datetime] = None
 
     class Config:
         """정의되지 않은 필드도 허용합니다."""
