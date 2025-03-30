@@ -1,27 +1,427 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-import time
-from fastapi_pagination import Params, add_pagination
-from fastapi_pagination.ext.sqlalchemy import paginate
+"""식사 관련 API 모듈
 
-from app.database import get_db
+이 모듈은 FastAPI를 기반으로 식사 관련 CRUD API를 제공합니다.
+식사 데이터를 등록, 조회, 수정, 삭제할 수 있으며, 페이징 처리를 지원합니다.
+
+API 목록:
+    - `GET /meals`: 모든 식사 데이터를 페이징 형태로 조회합니다.
+    - `GET /meals/{meal_id}`: 특정 식사 데이터를 조회합니다.
+    - `GET /meals/restaurant/{restaurant_id}`: 특정 식당의 식사 데이터를 조회합니다.
+    - `POST /meals/{restaurant_id}`: 새로운 식사를 등록합니다.
+    - `DELETE /meals/{meal_id}`: 특정 식사 데이터를 삭제합니다.
+    - `DELETE /meals/{meal_id}/menus`: 특정 식사의 메뉴를 삭제합니다.
+    - `PATCH /meals/{meal_id}/menus`: 특정 식사의 메뉴를 수정합니다.
+
+사용자 인증이 필요한 API의 경우, 요청자의 권한을 검증하며,
+식당 관리자인 경우에만 등록, 수정, 삭제 기능을 수행할 수 있습니다.
+
+이 모듈은 다음과 같은 주요 유틸리티 함수를 활용합니다:
+    - `apply_date_filter`: 날짜 필터링을 적용하는 함수
+    - `check_restaurant_permission`: 사용자의 식당 접근 권한을 확인하는 함수
+    - `get_meal_type`: 식사 유형을 조회하는 함수
+    - `register_meal_transaction`: 식사를 데이터베이스에 등록하는 트랜잭션 처리 함수
+    - `delete_meal_transaction`: 식사를 삭제하는 트랜잭션 처리 함수
+    - `update_meal_menu_transaction`: 식사 메뉴를 수정하는 트랜잭션 처리 함수
+    - `update_meal_menu`: 식사 메뉴를 추가하는 로직
+    - `delete_meal_menu`: 식사 메뉴를 삭제하는 로직
+
+모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi_pagination import Params, add_pagination, paginate
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+from typing import Annotated
+
+from app.config import logger, Config
 from app.models.meals import Meal
-from app.schemas.meals import MealResponse
+from app.models.user import User
+from app.schemas.base import BaseSchema
+from app.schemas.meals import (
+    MenuEdit,
+    MealEditResponse,
+    MealRegister,
+    MealRegisterResponse,
+    MealResponse,
+)
+from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
+from app.utils.db import get_current_user, get_db
+from app.utils.meals import (
+    apply_date_filter,
+    get_meal_type,
+    register_meal_transaction,
+    delete_meal_transaction,
+    update_meal_menu_transaction,
+    update_meal_menu,
+    delete_meal_menu,
+)
+from app.utils.restaurants import get_restaurant_with_permission
 
-router = APIRouter()
+router = APIRouter(prefix="/meals")
 
-@router.get("/meals/", response_model=CustomPage[MealResponse])
-def list_meals(db: Session = Depends(get_db), params: Params = Depends()):
-    """모든 식사 데이터를 반환합니다."""
-    start_time = time.time()
-    page_data = paginate(db.query(Meal), params=params)  # 자동 페이징
 
-    return CustomPage.create(
-        data=page_data.items,
-        total=page_data.total,
-        params=params,
-        start_time=start_time
+@router.get("", response_model=CustomPage[MealResponse])
+async def list_meals(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[Params, Depends()],
+    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+):
+    """모든 식사 데이터를 페이징 형태로 반환합니다.
+
+    특정 기간(start_date ~ end_date)에 해당하는 식사 데이터를 조회하고자 한다면
+    해당 쿼리 파라미터를 사용하여 필터링할 수 있습니다. 날짜 형식은 "YYYY-MM-DD"를 사용하며,
+    만약 start_date나 end_date 중 하나만 입력하면 해당 날짜 기준으로 조회가 이뤄집니다.
+
+    Args:
+        start_date (str, optional): 검색 시작 날짜 (YYYY-MM-DD). 기본값은 None입니다.
+        end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD). 기본값은 None입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        params (Params): 페이징 처리를 위한 파라미터로, 페이지 번호와 페이지 크기를 지정합니다.
+
+    Returns:
+        CustomPage[MealResponse]: 페이징된 MealResponse 객체 목록입니다.
+
+    Raises:
+        HTTPException: start_date 또는 end_date가 잘못된 형식일 경우 400 에러가 발생합니다.
+    """
+    logger.info(
+        "Fetching all meals with filters: start_date=%s, end_date=%s",
+        start_date,
+        end_date,
     )
+
+    query = (
+        select(Meal)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+
+    query = await apply_date_filter(query, start_date, end_date)
+
+    result = await db.execute(query)
+    meals = result.scalars().all()
+
+    logger.info("Retrieved %d meals", len(meals))
+
+    response_data = [
+        MealResponse(
+            id=meal.id,
+            menu=meal.menu,
+            meal_type=MealTypeSchema(meal.meal_type.name),
+            restaurant_id=meal.restaurant_id,
+            restaurant_name=meal.restaurant.name,
+            registered_at=meal.registered_at,
+            updated_at=meal.updated_at,
+        )
+        for meal in meals
+    ]
+
+    return paginate(response_data, params)
+
+
+@router.get("/{meal_id}", response_model=BaseSchema[MealResponse])
+async def get_meal(
+    meal_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """특정 식사 데이터를 조회합니다.
+
+    식사 ID를 기준으로 식사 데이터를 검색하며, 존재하지 않을 경우 404 오류를 반환합니다.
+    반환된 데이터에는 식사의 메뉴, 식사 유형, 식당 정보, 등록 및 수정 날짜 등이 포함됩니다.
+
+    Args:
+        meal_id (int): 조회할 식사의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+
+    Returns:
+        BaseSchema[MealResponse]: 조회된 식사 데이터를 포함하는 응답 객체입니다.
+
+    Raises:
+        HTTPException(404): 주어진 ID에 해당하는 식사가 존재하지 않을 경우 발생합니다.
+    """
+    logger.info("Fetching meal with id: %d", meal_id)
+
+    result = await db.execute(
+        select(Meal)
+        .where(Meal.id == meal_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+    meal = result.scalars().first()
+
+    if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
+
+    logger.info("Meal found: %d", meal.id)
+
+    response_data = MealResponse(
+        id=meal.id,
+        menu=meal.menu,
+        meal_type=MealTypeSchema(meal.meal_type.name),
+        restaurant_id=meal.restaurant_id,
+        restaurant_name=meal.restaurant.name,
+        registered_at=meal.registered_at,
+        updated_at=meal.updated_at,
+    )
+
+    return BaseSchema[MealResponse](data=response_data)
+
+
+@router.get("/restaurant/{restaurant_id}", response_model=CustomPage[MealResponse])
+async def list_meals_by_restaurant(
+    restaurant_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[Params, Depends()],
+    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+):
+    """특정 식당의 식사 데이터를 페이징 형태로 조회합니다.
+
+    식당 ID를 기준으로 해당 식당의 모든 식사 데이터를 검색합니다.
+    또한, `start_date`와 `end_date`를 입력하면 특정 기간 동안 제공된 식사만 조회할 수 있습니다.
+    날짜 형식은 `"YYYY-MM-DD"`을 사용하며, `start_date` 또는 `end_date` 중 하나만 입력하면 해당 날짜를 기준으로 조회됩니다.
+
+    Args:
+        restaurant_id (int): 조회할 식당의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
+        start_date (str, optional): 검색 시작 날짜 (예: `"2024-01-01"`). 기본값은 `None`입니다.
+        end_date (str, optional): 검색 종료 날짜 (예: `"2024-01-31"`). 기본값은 `None`입니다.
+
+    Returns:
+        CustomPage[MealResponse]: 해당 식당의 식사 데이터 목록을 포함하는 페이징된 응답 객체입니다.
+
+    Raises:
+        HTTPException(400): `start_date` 또는 `end_date`가 잘못된 형식일 경우 발생합니다.
+    """
+    logger.info(
+        "Fetching meals for restaurant_id=%d with filters: start_date=%s, end_date=%s",
+        restaurant_id,
+        start_date,
+        end_date,
+    )
+
+    query = (
+        select(Meal)
+        .where(Meal.restaurant_id == restaurant_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+
+    query = await apply_date_filter(query, start_date, end_date)
+
+    result = await db.execute(query)
+    meals = result.scalars().all()
+
+    logger.info("Retrieved %d meals for restaurant_id=%d", len(meals), restaurant_id)
+
+    response_data = [
+        MealResponse(
+            id=meal.id,
+            menu=meal.menu,
+            meal_type=MealTypeSchema(meal.meal_type.name),
+            restaurant_id=meal.restaurant_id,
+            restaurant_name=meal.restaurant.name,
+            registered_at=meal.registered_at,
+            updated_at=meal.updated_at,
+        )
+        for meal in meals
+    ]
+
+    return paginate(response_data, params)
+
+
+@router.delete("/{meal_id}", status_code=Config.HttpStatus.NO_CONTENT)
+async def delete_meal(
+    meal_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """특정 식사 데이터를 삭제합니다.
+
+    주어진 `meal_id`에 해당하는 식사를 삭제합니다.
+    식사 데이터가 존재하지 않거나, 권한이 없는 사용자가 요청할 경우 예외가 발생합니다.
+
+    Args:
+        meal_id (int): 삭제할 식사의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Raises:
+        HTTPException(404): 주어진 `meal_id`에 해당하는 식사가 존재하지 않을 경우 발생합니다.
+        HTTPException(403): 해당 식사를 삭제할 권한이 없을 경우 발생합니다.
+    """
+    logger.info("User %d attempting to delete meal %d", current_user.id, meal_id)
+
+    # ✅ 1️⃣ Meal 조회
+    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    meal = result.scalars().first()
+
+    if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
+        raise HTTPException(status_code=404, detail="Meal not found")
+
+    # ✅ 2️⃣ `get_restaurant_with_permission()` 활용 → **권한 검증 & 레스토랑 객체 반환**
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+
+    # ✅ 3️⃣ Meal 삭제 트랜잭션 실행
+    await delete_meal_transaction(db, meal)
+    logger.info("Meal %d successfully deleted by user %d", meal_id, current_user.id)
+
+
+@router.post("/{restaurant_id}", status_code=Config.HttpStatus.CREATED)
+async def register_meal(
+    restaurant_id: int,
+    meal_register: MealRegister,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """새로운 식사를 등록합니다.
+
+    주어진 `restaurant_id`에 해당하는 식당에 새로운 식사를 추가합니다.
+    식사 등록 시 메뉴, 식사 유형을 지정해야 하며, 권한이 없는 사용자가 요청하면 예외가 발생합니다.
+
+    Args:
+        restaurant_id (int): 식사를 등록할 식당의 고유 ID입니다.
+        meal_register (MealRegister): 등록할 식사 정보가 포함된 요청 객체입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Returns:
+        BaseSchema[MealRegisterResponse]: 등록된 식사 정보를 포함한 응답 객체입니다.
+
+    Raises:
+        HTTPException(403): 해당 식당에 식사를 등록할 권한이 없을 경우 발생합니다.
+        HTTPException(500): 데이터베이스 오류로 인해 식사 등록에 실패한 경우 발생합니다.
+    """
+    logger.info(
+        "User %d attempting to register meal for restaurant %d",
+        current_user.id,
+        restaurant_id,
+    )
+
+    await get_restaurant_with_permission(restaurant_id, db, current_user)
+    meal_type = await get_meal_type(db, meal_register.meal_type)
+
+    new_meal = Meal(
+        restaurant_id=restaurant_id,
+        menu=meal_register.menu,
+        meal_type_id=meal_type.id,
+    )
+
+    await register_meal_transaction(db, new_meal)
+
+    logger.info(
+        "Meal %d successfully registered by user %d", new_meal.id, current_user.id
+    )
+
+    response_data = MealRegisterResponse(
+        id=new_meal.id,
+        restaurant_id=new_meal.restaurant_id,
+        meal_type=MealTypeSchema(meal_type.name),
+        registered_at=new_meal.registered_at,
+    )
+
+    return BaseSchema[MealRegisterResponse](data=response_data)
+
+
+@router.delete("/{meal_id}/menus", status_code=Config.HttpStatus.NO_CONTENT)
+async def delete_menu(
+    meal_id: int,
+    menu_delete: MenuEdit,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """특정 식사의 메뉴를 삭제합니다.
+
+    `meal_id`에 해당하는 식사에서 지정된 메뉴를 삭제합니다.
+    메뉴 삭제 후 식사 데이터를 업데이트하며, 권한이 없는 사용자가 요청하면 예외가 발생합니다.
+
+    Args:
+        meal_id (int): 메뉴를 삭제할 식사의 고유 ID입니다.
+        menu_delete (MenuEdit): 삭제할 메뉴 목록을 포함한 요청 객체입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Raises:
+        HTTPException(404): 주어진 `meal_id`에 해당하는 식사가 존재하지 않을 경우 발생합니다.
+        HTTPException(403): 해당 식사의 메뉴를 삭제할 권한이 없을 경우 발생합니다.
+        HTTPException(500): 데이터베이스 오류로 인해 메뉴 삭제에 실패한 경우 발생합니다.
+    """
+    logger.info(
+        "User %d attempting to delete menu for meal %d", current_user.id, meal_id
+    )
+
+    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    meal = result.scalars().first()
+
+    if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
+
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+
+    updated_menu = delete_meal_menu(meal, menu_delete.menu)
+    await update_meal_menu_transaction(db, meal, updated_menu)
+
+    logger.info("Menu successfully deleted for meal %d", meal.id)
+
+
+@router.patch("/{meal_id}/menus")
+async def edit_meal_menu(
+    meal_id: int,
+    menu_edit: MenuEdit,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """특정 식사의 메뉴를 수정합니다.
+
+    `meal_id`에 해당하는 식사의 기존 메뉴에 새로운 메뉴를 추가하거나 변경할 수 있습니다.
+    변경된 메뉴가 즉시 반영되며, 권한이 없는 사용자가 요청하면 예외가 발생합니다.
+
+    Args:
+        meal_id (int): 메뉴를 수정할 식사의 고유 ID입니다.
+        menu_edit (MenuEdit): 수정할 메뉴 목록을 포함한 요청 객체입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Returns:
+        BaseSchema[MealEditResponse]: 수정된 식사 정보를 포함한 응답 객체입니다.
+
+    Raises:
+        HTTPException(404): 주어진 `meal_id`에 해당하는 식사가 존재하지 않을 경우 발생합니다.
+        HTTPException(403): 해당 식사의 메뉴를 수정할 권한이 없을 경우 발생합니다.
+        HTTPException(500): 데이터베이스 오류로 인해 메뉴 수정에 실패한 경우 발생합니다.
+    """
+    logger.info("User %d attempting to edit menu for meal %d", current_user.id, meal_id)
+
+    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    meal = result.scalars().first()
+
+    if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
+        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
+
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+
+    updated_menu = update_meal_menu(meal, menu_edit.menu)
+    await update_meal_menu_transaction(db, meal, updated_menu)
+
+    logger.info("Menu successfully updated for meal %d", meal.id)
+
+    response_data = MealEditResponse(
+        id=meal.id,
+        restaurant_id=meal.restaurant_id,
+        meal_type=MealTypeSchema(meal.meal_type.name),
+        menu=meal.menu,
+    )
+
+    return BaseSchema[MealEditResponse](data=response_data)
+
 
 add_pagination(router)

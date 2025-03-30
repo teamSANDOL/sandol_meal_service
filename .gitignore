@@ -172,3 +172,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# db파일 동기화 방지
+*.db
+!test*.db
+
+.vscode/

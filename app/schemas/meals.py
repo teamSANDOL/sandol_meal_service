@@ -1,89 +1,118 @@
+"""식사 관련 데이터 모델 스키마 모듈
+
+이 모듈은 식사 관련 데이터 모델을 정의합니다. Pydantic을 사용하여 데이터 유효성 검사를 수행하며,
+식사 종류, 식사 등록, 식사 응답, 메뉴 수정 등의 다양한 모델을 포함합니다.
+
+클래스 목록:
+    - MealType: 식사 종류를 나타내는 Enum 클래스
+    - BaseMeal: 공통 Meal 모델
+    - MealRegister: 식사 등록 모델
+    - MealRegisterResponse: 식사 등록 응답 모델
+    - MealResponse: 개별 식사 응답 모델
+    - MenuEdit: 메뉴 수정 모델
+    - MealEditResponse: 식사 수정 응답 모델
+"""
+
+from typing import Annotated
 from datetime import datetime
 from enum import Enum
-from typing import Literal
-import pytz
-from pydantic import BaseModel, GetCoreSchemaHandler
-from pydantic_core import core_schema
+from pydantic import BaseModel
 
-# 서울 시간대 설정
-SEOUL_TZ = pytz.timezone("Asia/Seoul")
+from app.schemas.base import Timestamp as Tsp
 
+Timestamp = Annotated[datetime, Tsp]
 
-class Timestamp:
-    """KST(서울 시간)으로 자동 변환되는 datetime 필드"""
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, source_type, handler: GetCoreSchemaHandler):
-        """Pydantic이 사용할 스키마를 정의"""
-        return core_schema.no_info_after_validator_function(cls.convert_to_kst, handler.generate_schema(datetime))
-
-    @classmethod
-    def convert_to_kst(cls, value: str | datetime) -> datetime:
-        """ISO 8601 문자열 또는 datetime을 받아 KST 변환"""
-        if isinstance(value, str):
-            try:
-                dt = datetime.fromisoformat(value)
-                if dt.tzinfo is None:
-                    # ✅ 타임존이 없는 경우, 기본적으로 KST로 간주
-                    dt = dt.replace(tzinfo=SEOUL_TZ)
-                else:
-                    # ✅ 타임존이 있는 경우, KST로 변환
-                    dt = dt.astimezone(SEOUL_TZ)
-                return dt
-            except ValueError as err:
-                raise ValueError(f"Invalid ISO 8601 format: {value}") from err
-
-        elif isinstance(value, datetime):
-            if value.tzinfo is None:
-                # ✅ datetime 객체에 타임존이 없으면 KST로 간주
-                return value.replace(tzinfo=SEOUL_TZ)
-            else:
-                return value.astimezone(SEOUL_TZ)
-        else:
-            raise TypeError(f"Expected str or datetime, got {type(value)}")
 
 class MealType(str, Enum):
-    """식사 종류"""
+    """식사 종류를 나타내는 Enum 클래스
+
+    Attributes:
+        breakfast (str): 아침 식사
+        brunch (str): 브런치
+        lunch (str): 점심 식사
+        dinner (str): 저녁 식사
+    """
+
     breakfast = "breakfast"
     brunch = "brunch"
     lunch = "lunch"
     dinner = "dinner"
 
+
 class BaseMeal(BaseModel):
-    """공통 Meal 모델"""
-    id: int
+    """공통 Meal 모델
+
+    Attributes:
+        menu (list[str]): 메뉴 목록
+        meal_type (MealType): 식사 종류
+    """
+
     menu: list[str]
-    registered_at: Timestamp
     meal_type: MealType
 
 
-class MealResponse(BaseMeal):
-    """개별 식사 응답 모델"""
-    restaurant_id: int
-    restaurant_name: str
+class MealRegister(BaseMeal):
+    """식사 등록 모델
 
-
-class RestaurantMeal(BaseMeal):
-    """식당 내 개별 식사 모델"""
-
-
-class RestaurantMealResponse(BaseModel):
-    """식당 내 모든 식사 정보를 포함하는 응답"""
-    id: int
-    name: str
-    meals: list[RestaurantMeal]
+    BaseMeal을 상속받아 추가적인 필드를 포함하지 않음
+    """
 
 
 class MealRegisterResponse(BaseModel):
-    """식사 등록 응답"""
-    id: str
-    restaurant_id: str
+    """식사 등록 응답 모델
+
+    Attributes:
+        id (int): 식사 ID
+        restaurant_id (int): 식당 ID
+        meal_type (MealType): 식사 종류
+        registered_at (Timestamp): 등록 시간
+    """
+
+    id: int
+    restaurant_id: int
     meal_type: MealType
     registered_at: Timestamp
 
+
+class MealResponse(BaseMeal):
+    """개별 식사 응답 모델
+
+    Attributes:
+        id (int): 식사 ID
+        registered_at (Timestamp): 등록 시간
+        restaurant_id (int): 식당 ID
+        restaurant_name (str): 식당 이름
+        updated_at (Timestamp): 수정 시간
+    """
+
+    id: int
+    registered_at: Timestamp
+    restaurant_id: int
+    restaurant_name: str
+    updated_at: Timestamp
+
+
+class MenuEdit(BaseModel):
+    """메뉴 수정 모델
+
+    Attributes:
+        menu (str | list[str]): 수정할 메뉴 목록
+    """
+
+    menu: str | list[str]
+
+
 class MealEditResponse(BaseModel):
-    """식사 수정 응답"""
-    id: str
-    restaurant_id: str
+    """식사 수정 응답 모델
+
+    Attributes:
+        id (int): 식사 ID
+        restaurant_id (int): 식당 ID
+        meal_type (MealType): 식사 종류
+        menu (list[str]): 메뉴 목록
+    """
+
+    id: int
+    restaurant_id: int
     meal_type: MealType
     menu: list[str]
