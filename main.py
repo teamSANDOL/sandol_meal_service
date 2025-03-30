@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
 
 
 # lifespan 적용
-app = FastAPI(lifespan=lifespan, root_path="/meal_service")
+app = FastAPI(lifespan=lifespan, root_path="/meal")
 
 # 라우터 추가
 app.include_router(meals_router)
