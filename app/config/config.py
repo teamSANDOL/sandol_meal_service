@@ -49,7 +49,7 @@ class Config:
     """
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
-    USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user_service:8000")
+    USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000")
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./meal_service.db")
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
