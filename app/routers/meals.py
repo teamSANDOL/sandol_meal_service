@@ -28,35 +28,38 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi_pagination import Params, add_pagination, paginate
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
 from typing import Annotated
 
-from app.config import logger, Config
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi_pagination import Params, add_pagination, paginate
+from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.sql import over
+
+from app.config import Config, logger
 from app.models.meals import Meal
 from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.meals import (
-    MenuEdit,
     MealEditResponse,
     MealRegister,
     MealRegisterResponse,
     MealResponse,
+    MenuEdit,
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
 from app.utils.db import get_current_user, get_db
 from app.utils.meals import (
     apply_date_filter,
+    delete_meal_menu,
+    delete_meal_transaction,
     get_meal_type,
     register_meal_transaction,
-    delete_meal_transaction,
-    update_meal_menu_transaction,
     update_meal_menu,
-    delete_meal_menu,
+    update_meal_menu_transaction,
 )
 from app.utils.restaurants import get_restaurant_with_permission
 
@@ -123,6 +126,79 @@ async def list_meals(
     return paginate(response_data, params)
 
 
+@router.get("/latest", response_model=CustomPage[MealResponse])
+async def latest_meals_by_restaurant(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[Params, Depends()],
+    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+):
+    """모든 식당별로 가장 최신 식사 데이터를 각각 1개씩 조회합니다.
+
+    특정 기간(start_date ~ end_date)에 해당하는 식사 데이터를 조회하고자 한다면
+    해당 쿼리 파라미터를 사용하여 필터링할 수 있습니다. 날짜 형식은 "YYYY-MM-DD"를 사용하며,
+    만약 start_date나 end_date 중 하나만 입력하면 해당 날짜 기준으로 조회가 이뤄집니다.
+
+    Args:
+        start_date (str, optional): 검색 시작 날짜 (YYYY-MM-DD). 기본값은 None입니다.
+        end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD). 기본값은 None입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        params (Params): 페이징 처리를 위한 파라미터로, 페이지 번호와 페이지 크기를 지정합니다.
+
+    Returns:
+        CustomPage[MealResponse]: 페이징된 MealResponse 객체 목록입니다.
+
+    Raises:
+        HTTPException: start_date 또는 end_date가 잘못된 형식일 경우 400 에러가 발생합니다.
+    """
+    logger.info("Fetching latest meal per restaurant")
+
+    row_number = over(
+        func.row_number(),
+        partition_by=Meal.restaurant_id,
+        order_by=Meal.registered_at.desc(),
+    ).label("rnum")
+
+    subquery = (
+        select(Meal, row_number)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+
+    subquery = await apply_date_filter(subquery, start_date, end_date)
+
+    subquery = subquery.subquery()
+    meal_alias = aliased(Meal, subquery)
+
+    query = (
+        select(meal_alias)
+        .select_from(subquery)
+        .where(subquery.c.rnum == 1)
+        .options(selectinload(meal_alias.restaurant))
+        .options(selectinload(meal_alias.meal_type))
+    )
+
+    result = await db.execute(query)
+    meals = result.scalars().all()
+
+    logger.info("Retrieved %d latest meals (1 per restaurant)", len(meals))
+
+    response_data = [
+        MealResponse(
+            id=meal.id,
+            menu=meal.menu,
+            meal_type=MealTypeSchema(meal.meal_type.name),
+            restaurant_id=meal.restaurant_id,
+            restaurant_name=meal.restaurant.name,
+            registered_at=meal.registered_at,
+            updated_at=meal.updated_at,
+        )
+        for meal in meals
+    ]
+
+    return paginate(response_data, params)
+
+
 @router.get("/{meal_id}", response_model=BaseSchema[MealResponse])
 async def get_meal(
     meal_id: int,
@@ -155,7 +231,9 @@ async def get_meal(
 
     if not meal:
         logger.warning("Meal with id %d not found", meal_id)
-        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
+        )
 
     logger.info("Meal found: %d", meal.id)
 
@@ -167,6 +245,56 @@ async def get_meal(
         restaurant_name=meal.restaurant.name,
         registered_at=meal.registered_at,
         updated_at=meal.updated_at,
+    )
+
+    return BaseSchema[MealResponse](data=response_data)
+
+
+@router.get(
+    "/restaurant/{restaurant_id}/latest", response_model=BaseSchema[MealResponse]
+)
+async def latest_meal_by_restaurant(
+    restaurant_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """식당 ID를 기준으로 최신 식사 데이터를 조회합니다.
+
+    Args:
+        restaurant_id (int): 조회할 식당의 고유 ID입니다.
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+
+    Returns:
+        BaseSchema[MealResponse]: 해당 식당의 식사 데이터 목록을 포함하는 페이징된 응답 객체입니다.
+
+    Raises:
+        HTTPException(400): `start_date` 또는 `end_date`가 잘못된 형식일 경우 발생합니다.
+    """
+    logger.info("Fetching latest meal for restaurant_id=%d", restaurant_id)
+
+    query = (
+        select(Meal)
+        .where(Meal.restaurant_id == restaurant_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+        .order_by(Meal.registered_at.desc())
+        .limit(1)
+    )
+
+    result = await db.execute(query)
+    latest_meal = result.scalars().first()
+
+    if not latest_meal:
+        raise HTTPException(status_code=404, detail="식사 데이터가 존재하지 않습니다.")
+    logger.info("Latest meal found: %d", latest_meal.id)
+
+    response_data = MealResponse(
+        id=latest_meal.id,
+        menu=latest_meal.menu,
+        meal_type=MealTypeSchema(latest_meal.meal_type.name),
+        restaurant_id=latest_meal.restaurant_id,
+        restaurant_name=latest_meal.restaurant.name,
+        registered_at=latest_meal.registered_at,
+        updated_at=latest_meal.updated_at,
     )
 
     return BaseSchema[MealResponse](data=response_data)
@@ -362,7 +490,9 @@ async def delete_menu(
 
     if not meal:
         logger.warning("Meal with id %d not found", meal_id)
-        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
+        )
 
     await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
@@ -405,7 +535,9 @@ async def edit_meal_menu(
 
     if not meal:
         logger.warning("Meal with id %d not found", meal_id)
-        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
+        )
 
     await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
