@@ -133,7 +133,7 @@ async def latest_meals_by_restaurant(
     start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
     end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
 ):
-    """모든 식당별로 가장 최신 식사 데이터를 각각 1개씩 조회합니다.
+    """각 식당별 + 식사 유형별로 최신 식사 데이터를 1개씩 조회합니다.
 
     특정 기간(start_date ~ end_date)에 해당하는 식사 데이터를 조회하고자 한다면
     해당 쿼리 파라미터를 사용하여 필터링할 수 있습니다. 날짜 형식은 "YYYY-MM-DD"를 사용하며,
@@ -155,7 +155,7 @@ async def latest_meals_by_restaurant(
 
     row_number = over(
         func.row_number(),
-        partition_by=Meal.restaurant_id,
+        partition_by=(Meal.restaurant_id, Meal.meal_type_id),
         order_by=Meal.registered_at.desc(),
     ).label("rnum")
 
@@ -181,7 +181,7 @@ async def latest_meals_by_restaurant(
     result = await db.execute(query)
     meals = result.scalars().all()
 
-    logger.info("Retrieved %d latest meals (1 per restaurant)", len(meals))
+    logger.info("Retrieved %d meals grouped by restaurant and meal_type", len(meals))
 
     response_data = [
         MealResponse(
@@ -251,53 +251,76 @@ async def get_meal(
 
 
 @router.get(
-    "/restaurant/{restaurant_id}/latest", response_model=BaseSchema[MealResponse]
+    "/restaurant/{restaurant_id}/latest", response_model=CustomPage[MealResponse]
 )
 async def latest_meal_by_restaurant(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[Params, Depends()],
 ):
-    """식당 ID를 기준으로 최신 식사 데이터를 조회합니다.
+    """식당 ID를 기준으로 각 식사 유형별 최신 식사 데이터를 조회합니다.
 
     Args:
         restaurant_id (int): 조회할 식당의 고유 ID입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
+        params (Params): 페이징 파라미터입니다.
 
     Returns:
-        BaseSchema[MealResponse]: 해당 식당의 식사 데이터 목록을 포함하는 페이징된 응답 객체입니다.
+        CustomPage[MealResponse]: 식사 유형별 최신 식사 데이터 목록입니다.
 
     Raises:
-        HTTPException(400): `start_date` 또는 `end_date`가 잘못된 형식일 경우 발생합니다.
+        HTTPException(404): 식사 데이터가 존재하지 않는 경우 발생합니다.
     """
     logger.info("Fetching latest meal for restaurant_id=%d", restaurant_id)
 
-    query = (
-        select(Meal)
+    row_number = over(
+        func.row_number(),
+        partition_by=Meal.meal_type_id,
+        order_by=Meal.registered_at.desc(),
+    ).label("rnum")
+
+    subquery = (
+        select(Meal, row_number)
         .where(Meal.restaurant_id == restaurant_id)
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
-        .order_by(Meal.registered_at.desc())
-        .limit(1)
+        .subquery()
+    )
+
+    meal_alias = aliased(Meal, subquery)
+
+    query = (
+        select(meal_alias)
+        .select_from(subquery)
+        .where(subquery.c.rnum == 1)
+        .options(selectinload(meal_alias.restaurant))
+        .options(selectinload(meal_alias.meal_type))
     )
 
     result = await db.execute(query)
-    latest_meal = result.scalars().first()
+    meals = result.scalars().all()
 
-    if not latest_meal:
+    if not meals:
         raise HTTPException(status_code=404, detail="식사 데이터가 존재하지 않습니다.")
-    logger.info("Latest meal found: %d", latest_meal.id)
 
-    response_data = MealResponse(
-        id=latest_meal.id,
-        menu=latest_meal.menu,
-        meal_type=MealTypeSchema(latest_meal.meal_type.name),
-        restaurant_id=latest_meal.restaurant_id,
-        restaurant_name=latest_meal.restaurant.name,
-        registered_at=latest_meal.registered_at,
-        updated_at=latest_meal.updated_at,
+    logger.info(
+        "Retrieved %d latest meals for restaurant_id=%d", len(meals), restaurant_id
     )
 
-    return BaseSchema[MealResponse](data=response_data)
+    response_data = [
+        MealResponse(
+            id=meal.id,
+            menu=meal.menu,
+            meal_type=MealTypeSchema(meal.meal_type.name),
+            restaurant_id=meal.restaurant_id,
+            restaurant_name=meal.restaurant.name,
+            registered_at=meal.registered_at,
+            updated_at=meal.updated_at,
+        )
+        for meal in meals
+    ]
+
+    return paginate(response_data, params)
 
 
 @router.get("/restaurant/{restaurant_id}", response_model=CustomPage[MealResponse])
