@@ -119,7 +119,7 @@ async def get_user_info(
     if Config.debug and user_id == 1:  # noqa: PLR2004
         return UserSchema(
             id=1,
-            is_admin=True,
+            global_admin=True,
             name="테스트 사용자",
             email="ident@example.com",
             created_at=datetime.fromisoformat("2021-08-01T00:00:00"),
@@ -155,7 +155,7 @@ async def is_global_admin(user_id: int, client: AsyncClient) -> bool:
 
 async def check_admin_user(
     user: User,
-    client: AsyncClient,
+    client: Annotated[AsyncClient, Depends(get_async_client)],
 ) -> bool:
     """사용자가 관리자 권한을 가지고 있는지 확인합니다.
 
