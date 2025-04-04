@@ -2,6 +2,7 @@
 
 이 모듈은 식당과 관련된 다양한 유틸리티 함수들을 포함하고 있습니다.
 """
+
 from typing import Annotated
 from datetime import datetime
 
@@ -16,8 +17,8 @@ from app.schemas.restaurants import (
     Location,
     RestaurantResponse,
     TimeRange,
-    UserSchema
 )
+from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
 from app.utils.db import get_db, check_admin_user, get_current_user
 from app.utils.times import get_datetime_by_string
 from app.config import logger, Config
@@ -55,6 +56,46 @@ async def fetch_operating_hours_dict(
         oh.type: TimeRange(start=oh.start_time, end=oh.end_time)
         for oh in operating_hours
     }
+
+
+async def fetch_restaurant_submission(
+    submission: RestaurantSubmission,
+    db: AsyncSession,
+    ) -> RestaurantSubmissionSchema:
+    operating_hours_dict = await fetch_operating_hours_dict(
+        db, submission_id=submission.id
+    )
+    logger.debug(
+        "Found %s operating hours for submission id %s",
+        len(operating_hours_dict),
+        submission.id,
+    )
+
+    return RestaurantSubmissionSchema(
+        status=submission.status,  # type: ignore
+        submitter=submission.submitter,
+        submitted_time=submission.submitted_time,
+        id=submission.id,
+        name=submission.name,
+        establishment_type=submission.establishment_type,  # type: ignore
+        location=build_location_schema(
+            submission.is_campus,
+            building=submission.building_name,
+            naver_link=submission.naver_map_link,
+            kakao_link=submission.kakao_map_link,
+            lat=submission.latitude,
+            lon=submission.longitude,
+        ),
+        opening_time=operating_hours_dict.get("opening_time"),
+        break_time=operating_hours_dict.get("break_time"),
+        breakfast_time=operating_hours_dict.get("breakfast_time"),
+        brunch_time=operating_hours_dict.get("brunch_time"),
+        lunch_time=operating_hours_dict.get("lunch_time"),
+        dinner_time=operating_hours_dict.get("dinner_time"),
+        reviewer=submission.reviewer,
+        reviewed_time=submission.reviewed_time,
+        rejection_message=submission.rejection_message,
+    )
 
 
 def build_map_links(naver_link: str | None, kakao_link: str | None) -> dict | None:
@@ -142,7 +183,8 @@ def build_restaurant_schema(
 
 
 async def get_submission_or_404(
-    request_id: int, db: Annotated[AsyncSession, Depends(get_db)],
+    request_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> RestaurantSubmission:
     """Submission을 조회하고, 없으면 404 예외를 발생시킨다.
 
@@ -162,7 +204,8 @@ async def get_submission_or_404(
     submission = result.scalars().first()
     if not submission:
         raise HTTPException(
-            status_code=Config.HttpStatus.NOT_FOUND, detail="해당 제출 요청이 존재하지 않습니다."
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="해당 제출 요청이 존재하지 않습니다.",
         )
     logger.info("Submission with id %s found", request_id)
     logger.debug("Submission: %s", submission)
@@ -202,21 +245,31 @@ async def get_submission_with_permission(
 
     if submission is None:
         logger.warning("Submission not found: %s", request_id)
-        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 제출 요청을 찾을 수 없습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="해당 제출 요청을 찾을 수 없습니다.",
+        )
 
     # 2️⃣ ✅ **권한 확인 (작성자 or 관리자)**
     if submission.submitter == current_user.id or await check_admin_user(current_user):  # type: ignore
-        logger.info("Permission granted for user %s on submission %s", current_user.id, request_id)
+        logger.info(
+            "Permission granted for user %s on submission %s",
+            current_user.id,
+            request_id,
+        )
         return submission
 
     # 3️⃣ ✅ **요청이 존재하지만 권한이 없는 경우**
-    raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="해당 제출 요청에 대한 권한이 없습니다.")
+    raise HTTPException(
+        status_code=Config.HttpStatus.FORBIDDEN,
+        detail="해당 제출 요청에 대한 권한이 없습니다.",
+    )
 
 
 async def get_restaurant_or_404(
-        db: Annotated[AsyncSession, Depends(get_db)],
-        restaurant_id: int
-        ) -> Restaurant:
+    db: Annotated[AsyncSession, Depends(get_db)],
+    restaurant_id: int,
+) -> Restaurant:
     """Restaurant를 조회하고, 없으면 404 예외를 발생시킨다.
 
     Args:
@@ -234,8 +287,12 @@ async def get_restaurant_or_404(
     result = await db.execute(select(Restaurant).filter(Restaurant.id == restaurant_id))
     restaurant = result.scalars().first()
     if not restaurant:
-        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 식당이 존재하지 않습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="해당 식당이 존재하지 않습니다.",
+        )
     return restaurant
+
 
 async def get_restaurant_with_permission(
     restaurant_id: int,
@@ -260,7 +317,11 @@ async def get_restaurant_with_permission(
         HTTPException(404): 해당 식당이 존재하지 않을 경우.
         HTTPException(403): 식당이 존재하지만 접근 권한이 없는 경우.
     """
-    logger.info("Checking permission for user %s on restaurant %s", current_user.id, restaurant_id)
+    logger.info(
+        "Checking permission for user %s on restaurant %s",
+        current_user.id,
+        restaurant_id,
+    )
 
     # ✅ 1️⃣ 식당 존재 여부 확인
     result = await db.execute(
@@ -271,7 +332,10 @@ async def get_restaurant_with_permission(
     restaurant = result.scalars().first()
 
     if restaurant is None:
-        raise HTTPException(status_code=Config.HttpStatus.NOT_FOUND, detail="해당 식당이 존재하지 않습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="해당 식당이 존재하지 않습니다.",
+        )
 
     # ✅ 2️⃣ 사용자가 관리자이거나 식당 소유자 또는 관리자인 경우 접근 허용
     if (
@@ -279,12 +343,21 @@ async def get_restaurant_with_permission(
         or any(manager.id == current_user.id for manager in restaurant.managers)
         or await check_admin_user(current_user)  # type: ignore
     ):
-        logger.info("Permission granted for user %s on restaurant %s", current_user.id, restaurant_id)
+        logger.info(
+            "Permission granted for user %s on restaurant %s",
+            current_user.id,
+            restaurant_id,
+        )
         return restaurant
 
     # ✅ 3️⃣ 식당이 존재하지만 접근 권한이 없는 경우
-    logger.warning("User %s has no permission for restaurant %s", current_user.id, restaurant_id)
-    raise HTTPException(status_code=Config.HttpStatus.FORBIDDEN, detail="해당 식당에 접근할 권한이 없습니다.")
+    logger.warning(
+        "User %s has no permission for restaurant %s", current_user.id, restaurant_id
+    )
+    raise HTTPException(
+        status_code=Config.HttpStatus.FORBIDDEN,
+        detail="해당 식당에 접근할 권한이 없습니다.",
+    )
 
 
 def validate_time_range(key: str, value: TimeRange):
@@ -303,10 +376,14 @@ def validate_time_range(key: str, value: TimeRange):
     value.to_datetime()
 
     if not (isinstance(value.start, datetime) and isinstance(value.end, datetime)):
-        raise HTTPException(status_code=Config.HttpStatus.BAD_REQUEST, detail=f"{key}의 시간이 올바르지 않습니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail=f"{key}의 시간이 올바르지 않습니다.",
+        )
     if value.start >= value.end:
         raise HTTPException(
-            status_code=Config.HttpStatus.BAD_REQUEST, detail=f"{key}의 시작 시간이 종료 시간보다 늦습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail=f"{key}의 시작 시간이 종료 시간보다 늦습니다.",
         )
     if not (
         get_datetime_by_string("00:00")
@@ -316,7 +393,8 @@ def validate_time_range(key: str, value: TimeRange):
         get_datetime_by_string("00:00") <= value.end <= get_datetime_by_string("23:59")
     ):
         raise HTTPException(
-            status_code=Config.HttpStatus.BAD_REQUEST, detail=f"{key}의 시간이 올바르지 않습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail=f"{key}의 시간이 올바르지 않습니다.",
         )
 
     value.to_string()

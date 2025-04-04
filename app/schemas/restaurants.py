@@ -165,6 +165,7 @@ class UserSchema(BaseModel):
     global_admin: bool = False
     service_account: bool = False
     created_at: datetime
+    updated_at: datetime
 
     class Config:
         """정의되지 않은 필드도 허용합니다."""

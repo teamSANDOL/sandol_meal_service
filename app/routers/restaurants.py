@@ -50,11 +50,12 @@ from app.schemas.restaurants import (
     RejectRestaurantRequest,
 )
 from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
-from app.utils.db import get_admin_user, get_current_user, get_db
+from app.utils.db import get_admin_user, get_current_user, get_db, check_admin_user
 from app.utils.restaurants import (
     build_location_schema,
     build_operating_hours_entries,
     fetch_operating_hours_dict,
+    fetch_restaurant_submission,
     get_restaurant_or_404,
     get_restaurant_with_permission,
     get_submission_or_404,
@@ -63,6 +64,49 @@ from app.utils.restaurants import (
 from typing import Annotated
 
 router = APIRouter(prefix="/restaurants")
+
+
+@router.get("/requests", response_model=CustomPage[RestaurantSubmissionSchema])
+async def restaurant_submit_get_requests(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[Params, Depends()],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """모든 식당 등록 요청을 페이징하여 조회합니다.
+
+    사용자는 자신의 등록 요청을 조회할 수 있으며,
+    관리자는 모든 등록 요청을 조회할 수 있습니다.
+
+    Args:
+        db (AsyncSession): 비동기 DB 세션 객체입니다.
+        params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
+        current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+
+    Returns:
+        CustomPage[RestaurantSubmissionSchema]: 등록 요청 데이터 목록을 포함한 페이징된 응답 객체입니다.
+    """
+    logger.info(
+        "Get requests received by user: %s", current_user.id
+    )
+
+    # 요청자가 관리자인 경우 모든 요청 조회
+    if await check_admin_user(current_user):  # type: ignore
+        result = await db.execute(select(RestaurantSubmission))
+        submissions = result.scalars().all()
+    else:
+        # 요청자가 일반 사용자일 경우 자신의 요청만 조회
+        result = await db.execute(
+            select(RestaurantSubmission).filter(RestaurantSubmission.submitter == current_user.id)
+        )
+        submissions = result.scalars().all()
+
+    # 2️⃣ ORM 객체 → Pydantic 변환
+    submission_schemas = [
+        await fetch_restaurant_submission(submission, db)
+        for submission in submissions
+        ]
+
+    return paginate(submission_schemas, params)
 
 
 @router.post("/requests", status_code=Config.HttpStatus.CREATED)
@@ -302,40 +346,7 @@ async def restaurant_submit_get(
     )
 
 
-    operating_hours_dict = await fetch_operating_hours_dict(
-        db, submission_id=request_id
-    )
-    logger.debug(
-        "Found %s operating hours for submission id %s",
-        len(operating_hours_dict),
-        request_id,
-    )
-
-    response_data = RestaurantSubmissionSchema(
-        status=submission.status,  # type: ignore
-        submitter=submission.submitter,
-        submitted_time=submission.submitted_time,
-        id=submission.id,
-        name=submission.name,
-        establishment_type=submission.establishment_type,  # type: ignore
-        location=build_location_schema(
-            submission.is_campus,
-            building=submission.building_name,
-            naver_link=submission.naver_map_link,
-            kakao_link=submission.kakao_map_link,
-            lat=submission.latitude,
-            lon=submission.longitude,
-        ),
-        opening_time=operating_hours_dict.get("opening_time"),
-        break_time=operating_hours_dict.get("break_time"),
-        breakfast_time=operating_hours_dict.get("breakfast_time"),
-        brunch_time=operating_hours_dict.get("brunch_time"),
-        lunch_time=operating_hours_dict.get("lunch_time"),
-        dinner_time=operating_hours_dict.get("dinner_time"),
-        reviewer=submission.reviewer,
-        reviewed_time=submission.reviewed_time,
-        rejection_message=submission.rejection_message,
-    )
+    response_data = await fetch_restaurant_submission(submission, db)
 
     return BaseSchema[RestaurantSubmissionSchema](data=response_data)
 
