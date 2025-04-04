@@ -24,12 +24,14 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from httpx import AsyncClient
 
 from app.config import logger, Config
 from app.models.restaurants import (
@@ -61,7 +63,7 @@ from app.utils.restaurants import (
     get_submission_or_404,
     get_submission_with_permission,
 )
-from typing import Annotated
+from app.utils.http import get_async_client
 
 router = APIRouter(prefix="/restaurants")
 
@@ -70,6 +72,7 @@ router = APIRouter(prefix="/restaurants")
 async def restaurant_submit_get_requests(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """모든 식당 등록 요청을 페이징하여 조회합니다.
@@ -81,30 +84,33 @@ async def restaurant_submit_get_requests(
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
+        client (AsyncClient): 비동기 HTTP 클라이언트 객체입니다.
 
     Returns:
         CustomPage[RestaurantSubmissionSchema]: 등록 요청 데이터 목록을 포함한 페이징된 응답 객체입니다.
     """
-    logger.info(
-        "Get requests received by user: %s", current_user.id
-    )
+    logger.info("Get requests received by user: %s", current_user.id)
 
     # 요청자가 관리자인 경우 모든 요청 조회
-    if await check_admin_user(current_user, raise_forbidden=False):  # type: ignore
+    if await check_admin_user(current_user, client, raise_forbidden=False):  # type: ignore
         result = await db.execute(select(RestaurantSubmission))
         submissions = result.scalars().all()
     else:
         # 요청자가 일반 사용자일 경우 자신의 요청만 조회
         result = await db.execute(
-            select(RestaurantSubmission).filter(RestaurantSubmission.submitter == current_user.id)
+            select(RestaurantSubmission).filter(
+                RestaurantSubmission.submitter == current_user.id
+            )
         )
         submissions = result.scalars().all()
 
     # 2️⃣ ORM 객체 → Pydantic 변환
     submission_schemas = [
-        await fetch_restaurant_submission(submission, db)
-        for submission in submissions
-        ]
+        await fetch_restaurant_submission(submission, db) for submission in submissions
+    ]
+
+    # 예시로 client를 사용한 로깅
+    logger.debug("HTTP client base URL: %s", client.base_url)
 
     return paginate(submission_schemas, params)
 
@@ -135,7 +141,8 @@ async def restaurant_submit_request(
     """
     if request.location is None or request.opening_time is None:
         raise HTTPException(
-            status_code=Config.HttpStatus.BAD_REQUEST, detail="location, opening_time 필드는 필수입니다."
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="location, opening_time 필드는 필수입니다.",
         )
 
     new_submission = RestaurantSubmission(
@@ -179,7 +186,10 @@ async def restaurant_submit_request(
     except Exception as e:
         await db.rollback()
         logger.error("Submission 요청 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
 
     return BaseSchema[SubmissionResponse](
         data=SubmissionResponse(request_id=new_submission.id)
@@ -214,7 +224,8 @@ async def restaurant_submit_approval(
     """
     if submission.status != "pending":
         raise HTTPException(
-            status_code=Config.HttpStatus.BAD_REQUEST, detail="해당 제출 요청은 이미 처리되었습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="해당 제출 요청은 이미 처리되었습니다.",
         )
 
     submission.status = "approved"
@@ -260,14 +271,19 @@ async def restaurant_submit_approval(
     except Exception as e:
         await db.rollback()
         logger.error("Approval 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
 
     return BaseSchema[ApproverResponse](
         data=ApproverResponse(restaurant_id=new_restaurant.id)
     )
 
 
-@router.post("/restaurants/{request_id}/rejection", status_code=Config.HttpStatus.NO_CONTENT)
+@router.post(
+    "/restaurants/{request_id}/rejection", status_code=Config.HttpStatus.NO_CONTENT
+)
 async def restaurant_submit_rejection(
     request_id: int,
     submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
@@ -295,12 +311,16 @@ async def restaurant_submit_rejection(
     """
     if submission.status != "pending":
         raise HTTPException(
-            status_code=Config.HttpStatus.BAD_REQUEST, detail="해당 제출 요청은 이미 처리되었습니다."
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="해당 제출 요청은 이미 처리되었습니다.",
         )
 
     rejection_message = request_body.message
     if not rejection_message:
-        raise HTTPException(status_code=Config.HttpStatus.BAD_REQUEST, detail="거부 사유는 필수 입력 사항입니다.")
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="거부 사유는 필수 입력 사항입니다.",
+        )
 
     submission.status = "rejected"
     submission.reviewer = current_user.id
@@ -313,13 +333,18 @@ async def restaurant_submit_rejection(
     except Exception as e:
         await db.rollback()
         logger.error("Approval 처리 중 예외 발생: %s", e)
-        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
 
 
 @router.get("/requests/{request_id}")
 async def restaurant_submit_get(
     request_id: int,
-    submission: Annotated[RestaurantSubmission, Depends(get_submission_with_permission)],
+    submission: Annotated[
+        RestaurantSubmission, Depends(get_submission_with_permission)
+    ],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
@@ -345,7 +370,6 @@ async def restaurant_submit_get(
         current_user.id,
     )
 
-
     response_data = await fetch_restaurant_submission(submission, db)
 
     return BaseSchema[RestaurantSubmissionSchema](data=response_data)
@@ -354,7 +378,9 @@ async def restaurant_submit_get(
 @router.delete("/requests/{request_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def restaurant_submit_delete(
     request_id: int,
-    submission: Annotated[RestaurantSubmission, Depends(get_submission_with_permission)],
+    submission: Annotated[
+        RestaurantSubmission, Depends(get_submission_with_permission)
+    ],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
@@ -493,7 +519,10 @@ async def delete_restaurant(
             current_user.id,
             e,
         )
-        raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="서버 내부 오류 발생") from e
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
 
 
 @router.get("/", response_model=CustomPage[RestaurantResponse])

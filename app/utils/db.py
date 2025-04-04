@@ -154,7 +154,7 @@ async def is_global_admin(user_id: int, client: AsyncClient) -> bool:
 
 async def check_admin_user(
     user: User,
-    client: Depends(get_async_client) = None,
+    client: AsyncClient,
     *,
     raise_forbidden: bool = True,
 ) -> bool:
@@ -163,6 +163,8 @@ async def check_admin_user(
     Args:
         user (UserSchema): 사용자 정보가 담긴 스키마 객체
         client (AsyncClient): 비동기 HTTP
+        raise_forbidden (bool): 관리자 권한이 없을 경우 예외를 발생시킬지 여부
+            (기본값: True)
 
     Returns:
         bool: 관리자 권한 여부
