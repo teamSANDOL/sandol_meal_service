@@ -123,7 +123,6 @@ async def get_user_info(
             name="테스트 사용자",
             email="ident@example.com",
             created_at=datetime.fromisoformat("2021-08-01T00:00:00"),
-            updated_at=datetime.fromisoformat("2021-08-01T00:00:00"),
         )
     response = await client.get(f"{Config.USER_SERVICE_URL}user/api/users/{user_id}/")
     try:
