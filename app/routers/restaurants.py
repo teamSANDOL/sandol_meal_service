@@ -90,7 +90,7 @@ async def restaurant_submit_get_requests(
     )
 
     # 요청자가 관리자인 경우 모든 요청 조회
-    if await check_admin_user(current_user):  # type: ignore
+    if await check_admin_user(current_user, raise_forbidden=False):  # type: ignore
         result = await db.execute(select(RestaurantSubmission))
         submissions = result.scalars().all()
     else:

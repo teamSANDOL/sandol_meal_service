@@ -251,7 +251,7 @@ async def get_submission_with_permission(
         )
 
     # 2️⃣ ✅ **권한 확인 (작성자 or 관리자)**
-    if submission.submitter == current_user.id or await check_admin_user(current_user):  # type: ignore
+    if submission.submitter == current_user.id or await check_admin_user(current_user, raise_forbidden=False):  # type: ignore
         logger.info(
             "Permission granted for user %s on submission %s",
             current_user.id,
@@ -341,7 +341,7 @@ async def get_restaurant_with_permission(
     if (
         restaurant.owner == current_user.id
         or any(manager.id == current_user.id for manager in restaurant.managers)
-        or await check_admin_user(current_user)  # type: ignore
+        or await check_admin_user(current_user, raise_forbidden=False)  # type: ignore
     ):
         logger.info(
             "Permission granted for user %s on restaurant %s",

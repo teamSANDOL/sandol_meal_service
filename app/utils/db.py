@@ -154,7 +154,9 @@ async def is_global_admin(user_id: int, client: AsyncClient) -> bool:
 
 async def check_admin_user(
     user: User,
-    client: AsyncClient = Depends(get_async_client),
+    client: Depends(get_async_client) = None,
+    *,
+    raise_forbidden: bool = True,
 ) -> bool:
     """사용자가 관리자 권한을 가지고 있는지 확인합니다.
 
@@ -170,6 +172,9 @@ async def check_admin_user(
     """
     if user.meal_admin or await is_global_admin(user.id, client):
         return True
+    if not raise_forbidden:
+        return False
+    logger.warning("관리자 권한 없음", extra={"user_id": user.id})
     raise HTTPException(
         status_code=Config.HttpStatus.FORBIDDEN, detail="관리자 권한이 필요합니다."
     )
