@@ -275,7 +275,7 @@ async def restaurant_submit_rejection(
 @router.get("/requests/{request_id}")
 async def restaurant_submit_get(
     request_id: int,
-    submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
+    submission: Annotated[RestaurantSubmission, Depends(get_submission_with_permission)],
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
