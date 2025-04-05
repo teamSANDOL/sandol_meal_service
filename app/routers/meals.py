@@ -28,7 +28,7 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
@@ -71,10 +71,10 @@ router = APIRouter(prefix="/meals")
 async def list_meals(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: Annotated[str, Query(None, description="검색 시작 날짜 (YYYY-MM-DD)")] = None,
-    end_date: Annotated[str, Query(None, description="검색 종료 날짜 (YYYY-MM-DD)")] = None,
-    restaurant_name: Annotated[str, Query(None, description="식당 이름 (부분 일치)")] = None,
-    meal_type: Annotated[MealTypeSchema, Query(None, description="식사 유형")] = None,
+    start_date: Optional[str] = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    restaurant_name: Optional[str] = Query(None, description="식당 이름 (부분 일치)"),
+    meal_type: Optional[MealTypeSchema] = Query(None, description="식사 유형"),
 ) -> CustomPage[MealResponse]:
     """모든 식사 데이터를 페이징 형태로 반환합니다.
 
@@ -138,10 +138,10 @@ async def list_meals(
 async def latest_meals_by_restaurant(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: Annotated[str, Query(None, description="검색 시작 날짜 (YYYY-MM-DD)")] = None,
-    end_date: Annotated[str, Query(None, description="검색 종료 날짜 (YYYY-MM-DD)")] = None,
-    restaurant_name: Annotated[str, Query(None, description="식당 이름 (부분 일치)")] = None,
-    meal_type: Annotated[MealTypeSchema, Query(None, description="식사 유형")] = None,
+    start_date: Optional[str] = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    restaurant_name: Optional[str] = Query(None, description="식당 이름 (부분 일치)"),
+    meal_type: Optional[MealTypeSchema] = Query(None, description="식사 유형"),
 ):
     """각 식당별 + 식사 유형별로 최신 식사 데이터를 1개씩 조회합니다.
 
@@ -337,8 +337,8 @@ async def list_meals_by_restaurant(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: Annotated[str, Query(None, description="검색 시작 날짜 (YYYY-MM-DD)")] = None,
-    end_date: Annotated[str, Query(None, description="검색 종료 날짜 (YYYY-MM-DD)")] = None,
+    start_date: Optional[str] = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
 ):
     """특정 식당의 식사 데이터를 페이징 형태로 조회합니다.
 
