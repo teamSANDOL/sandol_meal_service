@@ -40,6 +40,7 @@ from sqlalchemy.sql import over
 
 from app.config import Config, logger
 from app.models.meals import Meal
+from app.models.restaurants import Restaurant
 from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.meals import (
@@ -70,9 +71,11 @@ router = APIRouter(prefix="/meals")
 async def list_meals(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
-    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
-):
+    start_date: Annotated[str, Query(None, description="검색 시작 날짜 (YYYY-MM-DD)")] = None,
+    end_date: Annotated[str, Query(None, description="검색 종료 날짜 (YYYY-MM-DD)")] = None,
+    restaurant_name: Annotated[str, Query(None, description="식당 이름 (부분 일치)")] = None,
+    meal_type: Annotated[MealTypeSchema, Query(None, description="식사 유형")] = None,
+) -> CustomPage[MealResponse]:
     """모든 식사 데이터를 페이징 형태로 반환합니다.
 
     특정 기간(start_date ~ end_date)에 해당하는 식사 데이터를 조회하고자 한다면
@@ -84,6 +87,8 @@ async def list_meals(
         end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD). 기본값은 None입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 파라미터로, 페이지 번호와 페이지 크기를 지정합니다.
+        restaurant_name (str, optional): 식당 이름 (부분 일치). 기본값은 None입니다.
+        meal_type (MealTypeSchema, optional): 식사 유형. 기본값은 None입니다.
 
     Returns:
         CustomPage[MealResponse]: 페이징된 MealResponse 객체 목록입니다.
@@ -92,23 +97,27 @@ async def list_meals(
         HTTPException: start_date 또는 end_date가 잘못된 형식일 경우 400 에러가 발생합니다.
     """
     logger.info(
-        "Fetching all meals with filters: start_date=%s, end_date=%s",
+        "Fetching all meals with filters: start_date=%s, end_date=%s, restaurant_name=%s, meal_type=%s",
         start_date,
         end_date,
+        restaurant_name,
+        meal_type,
     )
 
     query = (
         select(Meal)
-        .options(selectinload(Meal.restaurant))
-        .options(selectinload(Meal.meal_type))
+        .options(selectinload(Meal.restaurant), selectinload(Meal.meal_type))
     )
+
+    if restaurant_name:
+        query = query.where(Meal.restaurant.has(Restaurant.name.contains(restaurant_name)))
+    if meal_type:
+        query = query.where(Meal.meal_type.has(name=meal_type.value))
 
     query = await apply_date_filter(query, start_date, end_date)
 
     result = await db.execute(query)
     meals = result.scalars().all()
-
-    logger.info("Retrieved %d meals", len(meals))
 
     response_data = [
         MealResponse(
@@ -122,7 +131,6 @@ async def list_meals(
         )
         for meal in meals
     ]
-
     return paginate(response_data, params)
 
 
@@ -130,8 +138,10 @@ async def list_meals(
 async def latest_meals_by_restaurant(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
-    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    start_date: Annotated[str, Query(None, description="검색 시작 날짜 (YYYY-MM-DD)")] = None,
+    end_date: Annotated[str, Query(None, description="검색 종료 날짜 (YYYY-MM-DD)")] = None,
+    restaurant_name: Annotated[str, Query(None, description="식당 이름 (부분 일치)")] = None,
+    meal_type: Annotated[MealTypeSchema, Query(None, description="식사 유형")] = None,
 ):
     """각 식당별 + 식사 유형별로 최신 식사 데이터를 1개씩 조회합니다.
 
@@ -144,6 +154,8 @@ async def latest_meals_by_restaurant(
         end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD). 기본값은 None입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 파라미터로, 페이지 번호와 페이지 크기를 지정합니다.
+        restaurant_name (str, optional): 식당 이름 (부분 일치). 기본값은 None입니다.
+        meal_type (MealTypeSchema, optional): 식사 유형. 기본값은 None입니다.
 
     Returns:
         CustomPage[MealResponse]: 페이징된 MealResponse 객체 목록입니다.
@@ -151,7 +163,7 @@ async def latest_meals_by_restaurant(
     Raises:
         HTTPException: start_date 또는 end_date가 잘못된 형식일 경우 400 에러가 발생합니다.
     """
-    logger.info("Fetching latest meal per restaurant")
+    logger.info("Fetching latest meal per restaurant + meal_type")
 
     row_number = over(
         func.row_number(),
@@ -159,23 +171,21 @@ async def latest_meals_by_restaurant(
         order_by=Meal.registered_at.desc(),
     ).label("rnum")
 
-    subquery = (
-        select(Meal, row_number)
-        .options(selectinload(Meal.restaurant))
-        .options(selectinload(Meal.meal_type))
-    )
+    selected = select(Meal, row_number)
 
-    subquery = await apply_date_filter(subquery, start_date, end_date)
+    if restaurant_name:
+        selected = selected.where(Meal.restaurant.has(Restaurant.name.contains(restaurant_name)))
+    if meal_type:
+        selected = selected.where(Meal.meal_type.has(name=meal_type.value))
 
-    subquery = subquery.subquery()
+    selected = await apply_date_filter(selected, start_date, end_date)
+    subquery = selected.subquery()
+
     meal_alias = aliased(Meal, subquery)
-
     query = (
         select(meal_alias)
-        .select_from(subquery)
         .where(subquery.c.rnum == 1)
-        .options(selectinload(meal_alias.restaurant))
-        .options(selectinload(meal_alias.meal_type))
+        .options(selectinload(meal_alias.restaurant), selectinload(meal_alias.meal_type))
     )
 
     result = await db.execute(query)
@@ -195,7 +205,6 @@ async def latest_meals_by_restaurant(
         )
         for meal in meals
     ]
-
     return paginate(response_data, params)
 
 
@@ -328,8 +337,8 @@ async def list_meals_by_restaurant(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: str = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
-    end_date: str = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    start_date: Annotated[str, Query(None, description="검색 시작 날짜 (YYYY-MM-DD)")] = None,
+    end_date: Annotated[str, Query(None, description="검색 종료 날짜 (YYYY-MM-DD)")] = None,
 ):
     """특정 식당의 식사 데이터를 페이징 형태로 조회합니다.
 

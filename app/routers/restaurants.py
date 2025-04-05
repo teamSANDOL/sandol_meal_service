@@ -24,9 +24,9 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -527,22 +527,45 @@ async def delete_restaurant(
 
 @router.get("/", response_model=CustomPage[RestaurantResponse])
 async def get_restaurants(
-    db: Annotated[AsyncSession, Depends(get_db)], params: Annotated[Params, Depends()]
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[Params, Depends()],
+    owner_id: int = Query(None, description="식당 소유자 ID"),
+    manager_id: int = Query(None, description="식당 관리자 ID"),
+    name: str = Query(None, description="식당 이름 (부분 일치)"),
+    establishment_type: Literal["student", "vendor", "external"] = Query(None, description="식당 유형(student|vendor|external)"),
+    is_campus: bool = Query(None, description="캠퍼스 내 식당 여부(true|false)"),
 ):
     """모든 식당 데이터를 페이징하여 조회합니다.
 
     Args:
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
+        owner_id (int, optional): 소유자 ID로 필터링
+        manager_id (int, optional): 관리자 ID로 필터링
+        name (str, optional): 식당 이름(부분 일치)으로 필터링
+        establishment_type (str, optional): 식당 유형(student|vendor|external)
+        is_campus (bool, optional): 캠퍼스 내 식당 여부
 
     Returns:
         CustomPage[RestaurantResponse]: 식당 데이터 목록을 포함한 페이징된 응답 객체입니다.
     """
-    # 1️⃣ SQLAlchemy ORM 객체 가져오기
-    result = await db.execute(select(Restaurant))
+    stmt = select(Restaurant)
+
+    if owner_id:
+        stmt = stmt.where(Restaurant.owner == owner_id)
+    if manager_id:
+        # Many-to-many 구조라 가정
+        stmt = stmt.where(Restaurant.managers.any(id=manager_id))
+    if name:
+        stmt = stmt.where(Restaurant.name.contains(name))
+    if establishment_type:
+        stmt = stmt.where(Restaurant.establishment_type == establishment_type)
+    if is_campus is not None:
+        stmt = stmt.where(Restaurant.is_campus == is_campus)
+
+    result = await db.execute(stmt)
     restaurants = result.scalars().all()
 
-    # 2️⃣ ORM 객체 → Pydantic 변환
     restaurant_schemas = []
     for restaurant in restaurants:
         operating_hours_result = await db.execute(
@@ -551,10 +574,12 @@ async def get_restaurants(
         operating_hours = operating_hours_result.scalars().all()
         operating_hours_dict = {
             operating_hour.type: TimeRange(
-                start=operating_hour.start_time, end=operating_hour.end_time
+                start=operating_hour.start_time,
+                end=operating_hour.end_time
             )
             for operating_hour in operating_hours
         }
+
         logger.debug(
             "Found %s operating hours for restaurant id %s",
             len(operating_hours),
@@ -565,7 +590,7 @@ async def get_restaurants(
             id=restaurant.id,
             name=restaurant.name,
             owner=restaurant.owner,
-            establishment_type=restaurant.establishment_type,  # type: ignore
+            establishment_type=restaurant.establishment_type,
             location=build_location_schema(
                 is_campus=restaurant.is_campus,
                 building=restaurant.building_name,
