@@ -28,7 +28,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
-from sqlalchemy import delete
+from sqlalchemy import case, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from httpx import AsyncClient
@@ -532,7 +532,9 @@ async def get_restaurants(
     owner_id: int = Query(None, description="식당 소유자 ID"),
     manager_id: int = Query(None, description="식당 관리자 ID"),
     name: str = Query(None, description="식당 이름 (부분 일치)"),
-    establishment_type: Literal["student", "vendor", "external"] = Query(None, description="식당 유형(student|vendor|external)"),
+    establishment_type: Literal["student", "vendor", "external"] = Query(
+        None, description="식당 유형(student|vendor|external)"
+    ),
     is_campus: bool = Query(None, description="캠퍼스 내 식당 여부(true|false)"),
 ):
     """모든 식당 데이터를 페이징하여 조회합니다.
@@ -558,6 +560,9 @@ async def get_restaurants(
         stmt = stmt.where(Restaurant.managers.any(id=manager_id))
     if name:
         stmt = stmt.where(Restaurant.name.contains(name))
+        stmt = stmt.order_by(
+            case((Restaurant.name == name, 0), else_=1), Restaurant.name.asc()
+        )
     if establishment_type:
         stmt = stmt.where(Restaurant.establishment_type == establishment_type)
     if is_campus is not None:
@@ -574,8 +579,7 @@ async def get_restaurants(
         operating_hours = operating_hours_result.scalars().all()
         operating_hours_dict = {
             operating_hour.type: TimeRange(
-                start=operating_hour.start_time,
-                end=operating_hour.end_time
+                start=operating_hour.start_time, end=operating_hour.end_time
             )
             for operating_hour in operating_hours
         }
