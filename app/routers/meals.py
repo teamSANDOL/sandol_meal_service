@@ -28,7 +28,6 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
-from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -478,8 +477,6 @@ async def register_meal(
         restaurant_id=restaurant_id,
         menu=meal_register.menu,
         meal_type_id=meal_type.id,
-        registered_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-        updated_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
 
     await register_meal_transaction(db, new_meal)
