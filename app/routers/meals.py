@@ -28,6 +28,7 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -104,13 +105,14 @@ async def list_meals(
         meal_type,
     )
 
-    query = (
-        select(Meal)
-        .options(selectinload(Meal.restaurant), selectinload(Meal.meal_type))
+    query = select(Meal).options(
+        selectinload(Meal.restaurant), selectinload(Meal.meal_type)
     )
 
     if restaurant_name:
-        query = query.where(Meal.restaurant.has(Restaurant.name.contains(restaurant_name)))
+        query = query.where(
+            Meal.restaurant.has(Restaurant.name.contains(restaurant_name))
+        )
     if meal_type:
         query = query.where(Meal.meal_type.has(name=meal_type.value))
 
@@ -174,7 +176,9 @@ async def latest_meals_by_restaurant(
     selected = select(Meal, row_number)
 
     if restaurant_name:
-        selected = selected.where(Meal.restaurant.has(Restaurant.name.contains(restaurant_name)))
+        selected = selected.where(
+            Meal.restaurant.has(Restaurant.name.contains(restaurant_name))
+        )
     if meal_type:
         selected = selected.where(Meal.meal_type.has(name=meal_type.value))
 
@@ -185,7 +189,9 @@ async def latest_meals_by_restaurant(
     query = (
         select(meal_alias)
         .where(subquery.c.rnum == 1)
-        .options(selectinload(meal_alias.restaurant), selectinload(meal_alias.meal_type))
+        .options(
+            selectinload(meal_alias.restaurant), selectinload(meal_alias.meal_type)
+        )
     )
 
     result = await db.execute(query)
@@ -472,6 +478,8 @@ async def register_meal(
         restaurant_id=restaurant_id,
         menu=meal_register.menu,
         meal_type_id=meal_type.id,
+        registered_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        updated_at=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
 
     await register_meal_transaction(db, new_meal)

@@ -85,13 +85,17 @@ class Meal(Base):
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        server_default=lambda: datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"
+        ),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-        onupdate=datetime.now(timezone.utc),
+        server_default=lambda: datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"
+        ),
+        onupdate=lambda: datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     )
 
     meal_type_id: Mapped[int] = mapped_column(
