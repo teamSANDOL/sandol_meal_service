@@ -30,6 +30,7 @@ API 목록:
 
 from typing import Annotated, Optional
 
+from httpx import AsyncClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import func
@@ -52,6 +53,7 @@ from app.schemas.meals import (
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
+from app.utils.http import get_async_client
 from app.utils.db import get_current_user, get_db
 from app.utils.meals import (
     apply_date_filter,
@@ -405,6 +407,7 @@ async def list_meals_by_restaurant(
 async def delete_meal(
     meal_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """특정 식사 데이터를 삭제합니다.
@@ -415,6 +418,7 @@ async def delete_meal(
     Args:
         meal_id (int): 삭제할 식사의 고유 ID입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
+        client (AsyncClient): 비동기 HTTP 클라이언트 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
     Raises:
@@ -432,7 +436,7 @@ async def delete_meal(
         raise HTTPException(status_code=404, detail="Meal not found")
 
     # ✅ 2️⃣ `get_restaurant_with_permission()` 활용 → **권한 검증 & 레스토랑 객체 반환**
-    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+    await get_restaurant_with_permission(meal.restaurant_id, db, client, current_user)
 
     # ✅ 3️⃣ Meal 삭제 트랜잭션 실행
     await delete_meal_transaction(db, meal)
@@ -444,6 +448,7 @@ async def register_meal(
     restaurant_id: int,
     meal_register: MealRegister,
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """새로운 식사를 등록합니다.
@@ -455,6 +460,7 @@ async def register_meal(
         restaurant_id (int): 식사를 등록할 식당의 고유 ID입니다.
         meal_register (MealRegister): 등록할 식사 정보가 포함된 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
+        client (AsyncClient): 비동기 HTTP 클라이언트 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
     Returns:
@@ -470,7 +476,7 @@ async def register_meal(
         restaurant_id,
     )
 
-    await get_restaurant_with_permission(restaurant_id, db, current_user)
+    await get_restaurant_with_permission(restaurant_id, db, client, current_user)
     meal_type = await get_meal_type(db, meal_register.meal_type)
 
     new_meal = Meal(
@@ -500,6 +506,7 @@ async def delete_menu(
     meal_id: int,
     menu_delete: MenuEdit,
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """특정 식사의 메뉴를 삭제합니다.
@@ -511,6 +518,7 @@ async def delete_menu(
         meal_id (int): 메뉴를 삭제할 식사의 고유 ID입니다.
         menu_delete (MenuEdit): 삭제할 메뉴 목록을 포함한 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
+        client (AsyncClient): 비동기 HTTP 클라이언트 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
     Raises:
@@ -531,7 +539,7 @@ async def delete_menu(
             status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
         )
 
-    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+    await get_restaurant_with_permission(meal.restaurant_id, db, client, current_user)
 
     updated_menu = delete_meal_menu(meal, menu_delete.menu)
     await update_meal_menu_transaction(db, meal, updated_menu)
@@ -544,6 +552,7 @@ async def edit_meal_menu(
     meal_id: int,
     menu_edit: MenuEdit,
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """특정 식사의 메뉴를 수정합니다.
@@ -555,6 +564,7 @@ async def edit_meal_menu(
         meal_id (int): 메뉴를 수정할 식사의 고유 ID입니다.
         menu_edit (MenuEdit): 수정할 메뉴 목록을 포함한 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
+        client (AsyncClient): 비동기 HTTP 클라이언트 객체입니다.
         current_user (User): 요청을 보낸 현재 사용자 객체입니다.
 
     Returns:
@@ -576,7 +586,7 @@ async def edit_meal_menu(
             status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
         )
 
-    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+    await get_restaurant_with_permission(meal.restaurant_id, db, client, current_user)
 
     updated_menu = update_meal_menu(meal, menu_edit.menu)
     await update_meal_menu_transaction(db, meal, updated_menu)

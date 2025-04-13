@@ -6,6 +6,7 @@
 from typing import Annotated
 from datetime import datetime
 
+from httpx import AsyncClient
 from fastapi import HTTPException, Depends
 from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from app.schemas.restaurants import (
 from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
 from app.utils.db import get_db, check_admin_user, get_current_user
 from app.utils.times import get_datetime_by_string
+from app.utils.http import get_async_client
 from app.config import logger, Config
 
 
@@ -61,7 +63,7 @@ async def fetch_operating_hours_dict(
 async def fetch_restaurant_submission(
     submission: RestaurantSubmission,
     db: AsyncSession,
-    ) -> RestaurantSubmissionSchema:
+) -> RestaurantSubmissionSchema:
     operating_hours_dict = await fetch_operating_hours_dict(
         db, submission_id=submission.id
     )
@@ -215,6 +217,7 @@ async def get_submission_or_404(
 async def get_submission_with_permission(
     request_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> RestaurantSubmission:
     """제출 요청을 조회하면서, 존재 여부와 권한을 개별적으로 검증하는 함수.
@@ -226,6 +229,7 @@ async def get_submission_with_permission(
     Args:
         request_id (int): 요청 ID.
         db (AsyncSession): 비동기 DB 세션.
+        client (AsyncClient): 비동기 HTTP 클라이언트.
         current_user (User): 현재 사용자.
 
     Returns:
@@ -251,7 +255,9 @@ async def get_submission_with_permission(
         )
 
     # 2️⃣ ✅ **권한 확인 (작성자 or 관리자)**
-    if submission.submitter == current_user.id or await check_admin_user(current_user, raise_forbidden=False):  # type: ignore
+    if submission.submitter == current_user.id or await check_admin_user(
+        current_user, client, raise_forbidden=False
+    ):
         logger.info(
             "Permission granted for user %s on submission %s",
             current_user.id,
@@ -297,6 +303,7 @@ async def get_restaurant_or_404(
 async def get_restaurant_with_permission(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> Restaurant:
     """식당을 조회하면서, 동시에 사용자 권한을 확인하는 함수.
@@ -308,6 +315,7 @@ async def get_restaurant_with_permission(
     Args:
         restaurant_id (int): 조회할 식당 ID.
         db (AsyncSession): 비동기 데이터베이스 세션.
+        client (AsyncClient): 비동기 HTTP 클라이언트.
         current_user (User): 현재 사용자 객체.
 
     Returns:
@@ -341,7 +349,7 @@ async def get_restaurant_with_permission(
     if (
         restaurant.owner == current_user.id
         or any(manager.id == current_user.id for manager in restaurant.managers)
-        or await check_admin_user(current_user, raise_forbidden=False)  # type: ignore
+        or await check_admin_user(current_user, client, raise_forbidden=False)
     ):
         logger.info(
             "Permission granted for user %s on restaurant %s",
