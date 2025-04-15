@@ -10,8 +10,12 @@ import json
 from dotenv import load_dotenv
 from pytz import timezone
 
+from fastapi_pagination.utils import disable_installed_extensions_check
+
 # 환경 변수 로딩
 load_dotenv()
+
+disable_installed_extensions_check()
 
 # 현재 파일이 위치한 디렉터리 (config 폴더의 절대 경로)
 CONFIG_DIR = os.path.dirname(__file__)
