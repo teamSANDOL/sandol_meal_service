@@ -17,10 +17,10 @@ from app.models.user import User
 from app.schemas.users import UserCreate, UserRead
 from app.utils.db import get_db, get_user_info, get_async_client
 
-user_router = APIRouter(prefix="/users", tags=["User"])
+router = APIRouter(prefix="/users", tags=["User"])
 
 
-@user_router.post("/", response_model=UserRead)
+@router.post("/", response_model=UserRead)
 async def create_user(
     user_in: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -68,7 +68,7 @@ async def create_user(
     return user
 
 
-@user_router.get("/{user_id}", response_model=UserRead)
+@router.get("/{user_id}", response_model=UserRead)
 async def get_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
     """Get a user by ID."""
     result = await db.execute(select(User).where(User.id == user_id))
@@ -80,14 +80,14 @@ async def get_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
     return user
 
 
-@user_router.get("/", response_model=list[UserRead])
+@router.get("/", response_model=list[UserRead])
 async def list_users(db: Annotated[AsyncSession, Depends(get_db)]):
     """List all users."""
     result = await db.execute(select(User))
     return result.scalars().all()
 
 
-@user_router.delete("/{user_id}", status_code=Config.HttpStatus.NO_CONTENT)
+@router.delete("/{user_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def delete_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
     """Delete a user by ID."""
     result = await db.execute(select(User).where(User.id == user_id))

@@ -6,7 +6,7 @@ from fastapi import FastAPI
 import uvicorn
 
 from app.config import logger, Config
-from app.routers import meals_router, restaurants_router
+from app.routers import meals_router, restaurants_router, users_router
 from app.utils.lifespan import sync_meal_types, sync_test_users
 from app.database import init_db
 
@@ -46,6 +46,7 @@ app = FastAPI(lifespan=lifespan, root_path="/meal")
 # 라우터 추가
 app.include_router(meals_router)
 app.include_router(restaurants_router)
+app.include_router(users_router)
 
 
 @app.get("/")

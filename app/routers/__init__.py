@@ -8,5 +8,6 @@ utils.py에는 API 서버에서 사용하는 유틸리티 함수들이 정의되
 
 from .meals import router as meals_router
 from .restaurants import router as restaurants_router
+from .users import router as users_router
 
-__all__ = ["meals_router", "restaurants_router"]
+__all__ = ["meals_router", "restaurants_router", "users_router"]
