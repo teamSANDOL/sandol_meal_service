@@ -15,6 +15,13 @@ load_dotenv()
 
 # 현재 파일이 위치한 디렉터리 (config 폴더의 절대 경로)
 CONFIG_DIR = os.path.dirname(__file__)
+CONFIG_DIR = os.path.abspath(CONFIG_DIR)
+
+SERVICE_DIR = os.path.abspath(os.path.join(CONFIG_DIR, "../.."))
+
+# tmp_dir make
+if not os.path.exists(os.path.join(SERVICE_DIR, "tmp")):
+    os.makedirs(os.path.join(SERVICE_DIR, "tmp"))
 
 # 로깅 설정
 logger = logging.getLogger("sandol_meal_service")
@@ -47,10 +54,18 @@ class Config:
     이 클래스는 환경 변수에서 설정 값을 로드하고, 기본 값을 제공합니다.
     또한, meal_types.json 파일에서 식사 유형을 불러오는 기능도 포함되어 있습니다.
     """
+
     debug = os.getenv("DEBUG", "False").lower() == "true"
+
+    SERVICE_ID: str = os.getenv("SERVICE_ID", "6")
+
+    SERVICE_DIR = SERVICE_DIR
+    CONFIG_DIR = CONFIG_DIR
+    TMP_DIR = os.path.join(SERVICE_DIR, "tmp")
 
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000")
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./meal_service.db")
+
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
 
