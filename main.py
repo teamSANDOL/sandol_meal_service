@@ -6,6 +6,7 @@ from fastapi import FastAPI
 import uvicorn
 
 from app.config import logger, Config
+from app.jobs.scheduler import start_scheduler, stop_scheduler
 from app.routers import meals_router, restaurants_router, users_router
 from app.utils.lifespan import sync_meal_types, sync_test_users
 from app.database import init_db
@@ -34,8 +35,11 @@ async def lifespan(app: FastAPI):
     # DEBUG 모드일 때, test_user 동기화 실행
     await sync_test_users()
 
+    start_scheduler()
+
     yield  # FastAPI가 실행 중인 동안 유지됨
 
+    stop_scheduler()
     # 애플리케이션 종료 시 로그 출력
     logger.info("🛑 서비스 종료: 정리 작업 완료")
 
