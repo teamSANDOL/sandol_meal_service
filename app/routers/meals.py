@@ -68,7 +68,7 @@ from app.utils.meals import (
 )
 from app.utils.restaurants import get_restaurant_with_permission
 
-router = APIRouter(prefix="/meals")
+router = APIRouter(prefix="/meals", tags=["Meals"])
 
 
 @router.get("", response_model=CustomPage[MealResponse])

@@ -65,7 +65,7 @@ from app.utils.restaurants import (
 )
 from app.utils.http import get_async_client
 
-router = APIRouter(prefix="/restaurants")
+router = APIRouter(prefix="/restaurants", tags=["Restaurant"])
 
 
 @router.get("/requests", response_model=CustomPage[RestaurantSubmissionSchema])
