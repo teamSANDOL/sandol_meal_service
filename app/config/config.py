@@ -29,7 +29,7 @@ logger.setLevel(logging.DEBUG)  # 모든 로그 기록
 
 # 핸들러 1: 파일에 모든 로그 저장 (디버깅용)
 file_handler = logging.FileHandler(
-    os.path.join(CONFIG_DIR, "app.log"), encoding="utf-8"
+    os.path.join(SERVICE_DIR, "app.log"), encoding="utf-8"
 )
 file_handler.setLevel(logging.DEBUG)  # DEBUG 이상 저장
 file_formatter = logging.Formatter(
