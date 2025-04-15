@@ -53,8 +53,10 @@ from app.schemas.meals import (
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
+from app.schemas.users import UserSchema
+from app.services.crawler_service import download_and_save_excel_to_db
 from app.utils.http import get_async_client
-from app.utils.db import get_current_user, get_db
+from app.utils.db import get_admin_user, get_current_user, get_db
 from app.utils.meals import (
     apply_date_filter,
     delete_meal_menu,
@@ -601,6 +603,27 @@ async def edit_meal_menu(
     )
 
     return BaseSchema[MealEditResponse](data=response_data)
+
+
+@router.post("/meal_sync", status_code=Config.HttpStatus.NO_CONTENT)
+async def force_sync_meal(current_user: Annotated[UserSchema, Depends(get_admin_user)]):
+    """학식 정보를 강제로 동기화합니다.
+
+    이 함수는 학식 정보를 학교 사이트에서 다운로드하여 데이터베이스에 저장합니다.
+
+    Args:
+        current_user (Annotated[UserSchema, Depends]): 요청을 보낸 현재 사용자 객체입니다.
+
+    Raises:
+        HTTPException: 동기화 중 오류가 발생한 경우 발생합니다.
+    """
+    try:
+        logger.info("Force syncing meals...")
+        await download_and_save_excel_to_db()
+    except Exception as e:
+        logger.error("Error during meal sync: %s", str(e))
+        raise HTTPException(status_code=500, detail=f"실패: {str(e)}") from e
+    logger.info("Meal sync completed successfully. requested by %s", current_user.id)
 
 
 add_pagination(router)
