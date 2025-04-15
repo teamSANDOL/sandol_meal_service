@@ -9,7 +9,7 @@ class UserCreate(BaseModel):
 
 class UserRead(BaseModel):
     id: int
-    mead_admin: bool = False
+    meal_admin: bool = False
 
     class Config:
         from_attributes = True
