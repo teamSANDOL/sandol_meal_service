@@ -61,7 +61,7 @@ class Config:
 
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
-    SERVICE_ID: str = os.getenv("SERVICE_ID", "6")
+    SERVICE_ID: str = str(os.getenv("SERVICE_ID", 6))
 
     SERVICE_DIR = SERVICE_DIR
     CONFIG_DIR = CONFIG_DIR
