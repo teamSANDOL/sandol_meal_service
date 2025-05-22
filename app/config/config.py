@@ -66,6 +66,7 @@ class Config:
     SERVICE_DIR = SERVICE_DIR
     CONFIG_DIR = CONFIG_DIR
     TMP_DIR = os.path.join(SERVICE_DIR, "tmp")
+    RESTAURANT_DATA = os.path.join(SERVICE_DIR, "student_cafeteria.json")
 
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000")
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./meal_service.db")

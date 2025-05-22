@@ -1,12 +1,16 @@
 """DB의 meal_type 테이블을 meal_types.json과 동기화"""
 import traceback
+import json
+from pathlib import Path
 
+from sqlalchemy import update, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy import func
 
 from app.database import AsyncSessionLocal
 from app.models.meals import MealType
+from app.models.restaurants import Restaurant
 from app.models.user import User
 from app.config import Config, logger
 
@@ -48,6 +52,47 @@ async def sync_meal_types():
             logger.warning("중복된 meal_type이 감지되었습니다.")
             await db.rollback()
             logger.debug("DB 롤백 완료")
+
+
+async def set_service_user_as_admin():
+    """Config.SERVICE_ID 유저의 meal_admin을 True로 설정"""
+    async with AsyncSessionLocal() as db:
+        try:
+            await db.execute(
+                update(User)
+                .where(User.id == Config.SERVICE_ID)
+                .values(meal_admin=True)
+            )
+            await db.commit()
+            logger.info("User(id=%s)의 meal_admin=True로 설정 완료", Config.SERVICE_ID)
+        except Exception:
+            await db.rollback()
+            logger.exception("SERVICE_ID 관리자 설정 중 예외 발생")
+
+
+async def sync_restaurants():
+    """restaurant.json 기준으로 Restaurant 테이블 전체 동기화 (추가 + 갱신)"""
+    async with AsyncSessionLocal() as db:
+        try:
+            restaurant_path = Path(Config.RESTAURANT_DATA)
+            data = json.loads(restaurant_path.read_text(encoding="utf-8"))
+
+            for entry in data:
+                stmt = (
+                    update(Restaurant)
+                    .where(Restaurant.id == entry["id"])
+                    .values(**entry)
+                )
+                result = await db.execute(stmt)
+                if result.rowcount == 0:
+                    db.add(Restaurant(**entry))
+
+            await db.commit()
+            logger.info("Restaurant 테이블 동기화 완료 (추가/갱신 포함)")
+
+        except Exception:
+            await db.rollback()
+            logger.exception("Restaurant 동기화 중 예외 발생")
 
 
 async def sync_test_users():

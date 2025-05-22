@@ -8,39 +8,51 @@ import uvicorn
 from app.config import logger, Config
 from app.jobs.scheduler import start_scheduler, stop_scheduler
 from app.routers import meals_router, restaurants_router, users_router
-from app.utils.lifespan import sync_meal_types, sync_test_users
+from app.utils.lifespan import (
+    sync_meal_types,
+    sync_test_users,
+    set_service_user_as_admin,
+    sync_restaurants,
+)
 from app.database import init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI의 lifespan 이벤트 핸들러"""
-    logger.info("🚀 서비스 시작: 데이터베이스 초기화 및 meal_types 동기화")
+    logger.info("🚀 서비스 시작: 데이터베이스 초기화 및 기본 데이터 동기화")
     logger.debug(
-        "Cofing 정보 로드 %s",
+        "Config 정보 로드: %s",
         {
-            "dubug": Config.debug,
+            "debug": Config.debug,
             "timezone": Config.TIMEZONE,
             "database_url": Config.DATABASE_URL,
             "user_service_url": Config.USER_SERVICE_URL,
         },
     )
 
-    # 애플리케이션 시작 시 데이터베이스 테이블 생성
+    # 1. DB 초기화
     await init_db()
 
-    # 서버 시작 시 meal_type 동기화 실행
+    # 2. meal_type 동기화
     await sync_meal_types()
 
-    # DEBUG 모드일 때, test_user 동기화 실행
+    # 3. Restaurant 동기화
+    await sync_restaurants()
+
+    # 4. SERVICE_ID 유저 관리자 권한 설정
+    await set_service_user_as_admin()
+
+    # 5. DEBUG 모드일 때 test_user 동기화
     await sync_test_users()
 
+    # 6. 스케줄러 시작
     start_scheduler()
 
-    yield  # FastAPI가 실행 중인 동안 유지됨
+    yield  # FastAPI 실행 유지
 
+    # 7. 종료 작업
     stop_scheduler()
-    # 애플리케이션 종료 시 로그 출력
     logger.info("🛑 서비스 종료: 정리 작업 완료")
 
 

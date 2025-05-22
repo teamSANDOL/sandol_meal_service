@@ -1,0 +1,26 @@
+[
+    {
+        "id": 1,
+        "name": "TIP 가가식당",
+        "owner": "6",
+        "is_campus": true,
+        "establishment_type": "student",
+        "building_name": "TIP",
+        "naver_map_link": "https://naver.me/xoH8iWqq",
+        "kakao_map_link": "https://kko.kakao.com/qUpUMrAKti",
+        "latitude": 37.341664,
+        "longitude": 126.732203
+    },
+    {
+        "id": 2,
+        "name": "E동 레스토랑",
+        "owner": "6",
+        "is_campus": true,
+        "establishment_type": "student",
+        "building_name": "E동",
+        "naver_map_link": "https://naver.me/FXwB3PWL",
+        "kakao_map_link": "https://kko.kakao.com/HkZume-gtd",
+        "latitude": 37.339603,
+        "longitude": 126.734895
+    }
+]
