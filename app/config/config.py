@@ -62,11 +62,13 @@ class Config:
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
     SERVICE_ID: str = str(os.getenv("SERVICE_ID", 6))
+    TIP_RESTAURANT_ID: str = str(os.getenv("TIP_RESTAURANT_ID", 1))
+    E_RESTAURANT_ID: str = str(os.getenv("TIP_RESTAURANT_ID", 2))
 
     SERVICE_DIR = SERVICE_DIR
     CONFIG_DIR = CONFIG_DIR
     TMP_DIR = os.path.join(SERVICE_DIR, "tmp")
-    RESTAURANT_DATA = os.path.join(SERVICE_DIR, "student_cafeteria.json")
+    RESTAURANT_DATA = os.path.join(CONFIG_DIR, "student_cafeteria.json")
 
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000")
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./meal_service.db")

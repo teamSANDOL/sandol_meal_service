@@ -10,8 +10,8 @@ from app.config import Config, logger
 KST = timezone("Asia/Seoul")
 EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 
-TIP_RESTAURANT_ID = 3
-E_RESTAURANT_ID = 4
+TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
+E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
 
 
 def clean_menu(menu_list):
