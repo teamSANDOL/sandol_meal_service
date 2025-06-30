@@ -53,9 +53,9 @@ class Config:
 
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
-    SERVICE_ID: str = str(os.getenv("SERVICE_ID", 6))
-    TIP_RESTAURANT_ID: str = str(os.getenv("TIP_RESTAURANT_ID", 1))
-    E_RESTAURANT_ID: str = str(os.getenv("TIP_RESTAURANT_ID", 2))
+    SERVICE_ID: str = os.getenv("SERVICE_ID", "6")
+    TIP_RESTAURANT_ID: str = os.getenv("TIP_RESTAURANT_ID", "1")
+    E_RESTAURANT_ID: str = os.getenv("E_RESTAURANT_ID", "2")
 
     SERVICE_DIR = SERVICE_DIR
     CONFIG_DIR = CONFIG_DIR
