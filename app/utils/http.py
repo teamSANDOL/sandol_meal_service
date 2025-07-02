@@ -10,7 +10,7 @@ class XUserIDClient(AsyncClient):
     """XUserIDClient 클래스는 비동기 HTTP 클라이언트로, 요청 헤더에 사용자 ID를 포함하여 전송합니다.
 
     Attributes:
-        user_id (Optional[int]): 요청 헤더에 포함될 사용자 ID (없을 수 있음).
+        user_id (Optional[str]): 요청 헤더에 포함될 사용자 ID (없을 수 있음).
 
     Methods:
         __init__(user_id: Optional[int], *args, **kwargs):
@@ -20,18 +20,20 @@ class XUserIDClient(AsyncClient):
         send(request: Request, **kwargs):
             요청 객체에 "X-User-ID" 헤더를 (존재할 경우) 추가한 후, 부모 클래스의 send 메서드를 호출합니다.
     """
-    def __init__(self, user_id: Optional[int], *args, **kwargs):
+    def __init__(self, user_id: Optional[str | int], *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if user_id is not None and not isinstance(user_id, str):
+            user_id = str(user_id)
         self.user_id = user_id
 
     async def send(self, request: Request, **kwargs):
         if self.user_id is not None:
-            request.headers["X-User-ID"] = str(self.user_id)
+            request.headers["X-User-ID"] = self.user_id
         return await super().send(request, **kwargs)
 
 
 async def get_async_client(
-    x_user_id: Optional[int] = Header(None),
+    x_user_id: Optional[str] = Header(None),
 ) -> AsyncGenerator[XUserIDClient, None]:
     """비동기 HTTP 클라이언트를 생성하고 반환합니다.
 
