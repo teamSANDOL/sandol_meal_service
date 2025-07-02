@@ -4,6 +4,8 @@ from typing import AsyncGenerator, Optional
 from httpx import AsyncClient, Request
 from fastapi import Header
 
+from app.config import Config
+
 class XUserIDClient(AsyncClient):
     """XUserIDClient 클래스는 비동기 HTTP 클라이언트로, 요청 헤더에 사용자 ID를 포함하여 전송합니다.
 
@@ -42,4 +44,17 @@ async def get_async_client(
         XUserIDClient: 사용자 ID를 포함할 수 있는 비동기 HTTP 클라이언트
     """
     async with XUserIDClient(user_id=x_user_id) as client:
+        yield client
+
+
+async def get_async_service_client(
+) -> AsyncGenerator[XUserIDClient, None]:
+    """서비스 계정의 비동기 HTTP 클라이언트를 생성하고 반환합니다.
+
+    서비스 ID를 X-User-ID 헤더에 포함하여 반환합니다.
+
+    Yields:
+        XUserIDClient: 사용자 ID를 포함할 수 있는 서비스 전용 비동기 HTTP 클라이언트
+    """
+    async with XUserIDClient(user_id=Config.SERVICE_ID) as client:
         yield client
