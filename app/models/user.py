@@ -34,7 +34,9 @@ class User(Base):
         "Restaurant",
         secondary=restaurant_manager_association,
         back_populates="managers",
+        cascade="all",
+        passive_deletes=True,
     )
     submitted_restaurants: Mapped[List["RestaurantSubmission"]] = relationship(
-        "RestaurantSubmission", back_populates="submitter_user"
+        "RestaurantSubmission", back_populates="submitter_user", cascade="all, delete-orphan", passive_deletes=True
     )

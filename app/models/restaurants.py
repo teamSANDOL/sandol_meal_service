@@ -18,7 +18,9 @@ from sqlalchemy import (
     Boolean,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.inspection import inspect
 
+from app.config.config import Config
 from app.database import Base
 from app.models.associations import restaurant_manager_association
 
@@ -68,6 +70,7 @@ class Restaurant(Base):
         "User",
         secondary=restaurant_manager_association,
         back_populates="managed_restaurants",
+        passive_deletes=True,
     )
 
     # ✅ 1:N 관계 유지
@@ -115,7 +118,8 @@ class RestaurantSubmission(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     submitter: Mapped[int] = mapped_column(
-        Integer, ForeignKey("User.id"), nullable=False
+        Integer, ForeignKey("User.id"), ondelete="CASCADE",
+        nullable=False,
     )
     submitted_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -138,7 +142,11 @@ class RestaurantSubmission(Base):
     latitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
 
-    submitter_user: Mapped["User"] = relationship("User", foreign_keys=[submitter])
+    submitter_user: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[submitter],
+        passive_deletes=True,
+    )
 
     # ✅ 여러 개의 OperatingHours가 연결될 수 있도록 수정
     operating_hours: Mapped[List["OperatingHours"]] = relationship(
