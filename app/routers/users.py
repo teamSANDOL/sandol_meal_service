@@ -12,10 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.config import Config
+from app.config.config import Config, logger
 from app.models.user import User
 from app.schemas.users import UserCreate, UserRead
 from app.utils.db import get_db, get_user_info, get_async_client
+from app.services.user_service import delete_user_process, create_user_process
 
 router = APIRouter(prefix="/users", tags=["User"])
 
@@ -44,28 +45,10 @@ async def create_user(
                 status_code=Config.HttpStatus.NOT_FOUND,
                 detail="User not found in User service",
             ) from e
+        logger.error("사용자 정보 조회 중 오류 발생: %s", e)
         raise e
 
-    result = await db.execute(select(User).where(User.id == user_in.id))
-    existing_user = result.scalar_one_or_none()
-    if existing_user:
-        raise HTTPException(
-            status_code=Config.HttpStatus.CONFLICT,
-            detail="User already exists",
-        )
-
-    user = User(**user_in.model_dump())
-    db.add(user)
-    try:
-        await db.commit()
-    except SQLAlchemyError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
-            detail="Database commit failed",
-        ) from e
-    await db.refresh(user)
-    return user
+    return await create_user_process(user_in, db)
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -90,17 +73,12 @@ async def list_users(db: Annotated[AsyncSession, Depends(get_db)]):
 @router.delete("/{user_id}", status_code=Config.HttpStatus.NO_CONTENT)
 async def delete_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
     """Delete a user by ID."""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(
-            status_code=Config.HttpStatus.NOT_FOUND, detail="User not found"
-        )
-    await db.delete(user)
+    await delete_user_process(db, user_id)
     try:
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
+        logger.error("사용자 삭제 중 오류 발생 %s", e)
         raise HTTPException(
             status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
             detail="Database commit failed",
