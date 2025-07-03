@@ -137,7 +137,7 @@ class RestaurantSubmission(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     submitter: Mapped[int] = mapped_column(
-        Integer, ForeignKey("User.id"), ondelete="CASCADE",
+        Integer, ForeignKey("User.id", ondelete="CASCADE"),
         nullable=False,
     )
     submitted_time: Mapped[datetime] = mapped_column(
