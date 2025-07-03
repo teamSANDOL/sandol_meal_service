@@ -92,7 +92,7 @@ class Restaurant(Base):
         """식당을 소프트 삭제 처리 (이름 수정 + 관계 초기화 + 필드 제거)"""
         # 1. 이름·소유자·관리자 관계 초기화
         self.name = f"[삭제됨] {self.name}"
-        self.owner = int(Config.DELETED_USER_ID)
+        self.owner = int(Config.SERVICE_ID)
         self.managers.clear()
 
         # 2. 컬럼 검사: id, name, owner 제외 + nullable=False인 컬럼도 제외
