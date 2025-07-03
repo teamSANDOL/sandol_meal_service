@@ -54,6 +54,7 @@ class Config:
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
     SERVICE_ID: str = os.getenv("SERVICE_ID", "6")
+    DELETED_USER_ID: str = os.getenv("DELETED_USER_ID", "999999")
     TIP_RESTAURANT_ID: str = os.getenv("TIP_RESTAURANT_ID", "1")
     E_RESTAURANT_ID: str = os.getenv("E_RESTAURANT_ID", "2")
 
