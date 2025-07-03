@@ -62,9 +62,13 @@ class Config:
     TMP_DIR = os.path.join(SERVICE_DIR, "tmp")
     RESTAURANT_DATA = os.path.join(CONFIG_DIR, "student_cafeteria.json")
 
-    USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000").rstrip("/")
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./meal_service.db")
-
+    USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000").rstrip(
+        "/"
+    )
+    DATABASE_URL = os.getenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://postgres:postgres@meal-service-db:5432/postgres",
+    )
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
 

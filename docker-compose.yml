@@ -1,6 +1,6 @@
 services:
-  app:
-    container_name: <서비스명>-app
+  meal-service:
+    container_name: meal-service
     build: .
     restart: always
     env_file:
@@ -10,12 +10,16 @@ services:
     networks:
       - sandol-network
     depends_on:
-      - db
+      - meal-service-db
 
-  db:
-    container_name: <서비스명>-db
+  meal-service-db:
+    container_name: meal-service-db
     image: postgres:15
     restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     env_file:
       - .env
     volumes:
