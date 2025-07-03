@@ -67,7 +67,7 @@ class Config:
     )
     DATABASE_URL = os.getenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://postgres:postgres@meal-service-db:5432/postgres",
+        "postgresql+asyncpg://postgres:postgres@meal-service-db:5432/meal_service",
     )
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
