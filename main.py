@@ -14,7 +14,6 @@ from app.utils.lifespan import (
     set_service_user_as_admin,
     sync_restaurants,
 )
-from app.database import init_db
 
 
 @asynccontextmanager

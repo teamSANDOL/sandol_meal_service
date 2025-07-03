@@ -2,7 +2,8 @@ import os
 import asyncio
 import sys
 from logging.config import fileConfig
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import create_engine
+from sqlalchemy.engine.url import make_url
 from sqlalchemy import pool
 from alembic import context
 from dotenv import load_dotenv
@@ -15,11 +16,15 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ✅ 데이터베이스 설정 (없을 경우 에러 발생)
 DATABASE_URL = os.environ.get("DATABASE_URL")
+print(f"🔗 DATABASE_URL: {DATABASE_URL}")  # ✅ 디버깅용 출력
 if not DATABASE_URL:
     raise ValueError("❌ DATABASE_URL 환경 변수가 설정되지 않았습니다.")
 
 config = context.config
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+url = make_url(DATABASE_URL)
+if url.drivername.startswith("postgresql+asyncpg"):
+    url = url.set(drivername="postgresql")  # alembic은 sync driver 사용
+config.set_main_option("sqlalchemy.url", str(url))
 
 # ✅ Python 로깅 설정
 if config.config_file_name is not None:
@@ -44,7 +49,7 @@ def render_item(type_, obj, autogen_context):
 
 
 # ✅ 비동기 DB 엔진 생성
-connectable = create_async_engine(DATABASE_URL, poolclass=pool.NullPool, future=True)
+connectable = create_engine(url, poolclass=pool.NullPool, future=True)
 
 
 def run_migrations_offline():
@@ -61,17 +66,15 @@ def run_migrations_offline():
         context.run_migrations()
 
 
-async def run_migrations_online():
-    """온라인 모드에서 마이그레이션 실행"""
-    async with connectable.connect() as connection:
-        await connection.run_sync(
-            lambda conn: context.configure(
-                connection=conn,
-                target_metadata=target_metadata,
-                render_item=render_item,
-            )
+def run_migrations_online():
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_item=render_item,
         )
-        await connection.run_sync(lambda conn: context.run_migrations())
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():
@@ -79,4 +82,4 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     print("🚀 Running migrations in ONLINE mode...")
-    asyncio.run(run_migrations_online())
+    run_migrations_online()

@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from app.config import Config
 from app.models.user import User
@@ -60,7 +61,9 @@ async def delete_user_process(session: AsyncSession, user_id: int):
         )
 
     result = await session.execute(
-        select(Restaurant).filter(Restaurant.owner == user.id)
+        select(Restaurant)
+        .options(selectinload(Restaurant.managers))  # managers 미리 로드
+        .where(Restaurant.owner == user.id)
     )
     for restaurant in result.scalars():
         restaurant.soft_delete()
@@ -71,5 +74,8 @@ async def delete_user_process(session: AsyncSession, user_id: int):
     for restaurant in managed.scalars():
         if user in restaurant.managers:
             restaurant.managers.remove(user)
+
+    # 💡 중간 flush로 관계 정리
+    await session.flush()
 
     await session.delete(user)

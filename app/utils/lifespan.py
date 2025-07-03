@@ -4,7 +4,7 @@ import traceback
 import json
 from pathlib import Path
 
-from sqlalchemy import insert, update, select
+from sqlalchemy import insert, update, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -77,14 +77,6 @@ async def set_service_user_as_admin():
                 await db.execute(
                     insert(User).values(id=Config.SERVICE_ID, meal_admin=True)
                 )
-
-            # global_admin 추가
-            result = await db.execute(select(User).where(User.id == 1))
-            global_admin = result.scalar_one_or_none()
-
-            if not global_admin:
-                await db.execute(insert(User).values(id=1, global_admin=True))
-
             await db.commit()
             logger.info("User(id=%s)의 meal_admin=True로 설정 완료", Config.SERVICE_ID)
             logger.info(
@@ -114,6 +106,18 @@ async def sync_restaurants():
 
             await db.commit()
             logger.info("Restaurant 테이블 동기화 완료 (추가/갱신 포함)")
+
+            # ✅ 시퀀스 재설정 (PostgreSQL 전용)
+            await db.execute(
+                text("""
+                    SELECT setval(
+                        pg_get_serial_sequence('"Restaurant"', 'id'),
+                        (SELECT MAX(id) FROM "Restaurant")
+                    )
+                """)
+            )
+            await db.commit()
+            logger.info("Restaurant 시퀀스 재설정 완료")
 
         except Exception:
             await db.rollback()
