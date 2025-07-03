@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     )
 
     # 1. DB 초기화
-    await init_db()
+    # await init_db()
 
     # 2. meal_type 동기화
     await sync_meal_types()
