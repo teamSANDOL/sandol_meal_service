@@ -1,9 +1,10 @@
 """DB의 meal_type 테이블을 meal_types.json과 동기화"""
+
 import traceback
 import json
 from pathlib import Path
 
-from sqlalchemy import update, select
+from sqlalchemy import insert, update, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -37,10 +38,14 @@ async def sync_meal_types():
             new_meal_types = [
                 MealType(name=mt) for mt in meal_types if mt not in existing_meal_types
             ]
-            logger.debug("새로 추가할 meal_type: %s", [mt.name for mt in new_meal_types])
+            logger.debug(
+                "새로 추가할 meal_type: %s", [mt.name for mt in new_meal_types]
+            )
 
             if new_meal_types:
-                db.add_all(new_meal_types)  # ✅ `bulk_save_objects()` 대신 `add_all()` 사용
+                db.add_all(
+                    new_meal_types
+                )  # ✅ `bulk_save_objects()` 대신 `add_all()` 사용
                 await db.commit()
                 logger.info("%s개의 meal_type이 추가되었습니다.", len(new_meal_types))
             else:
@@ -55,19 +60,39 @@ async def sync_meal_types():
 
 
 async def set_service_user_as_admin():
-    """Config.SERVICE_ID 유저의 meal_admin을 True로 설정"""
+    """Config.SERVICE_ID 유저의 meal_admin을 True로 설정, ID=1 유저를 global_admin으로 추가"""
     async with AsyncSessionLocal() as db:
         try:
-            await db.execute(
-                update(User)
-                .where(User.id == Config.SERVICE_ID)
-                .values(meal_admin=True)
-            )
+            # meal_admin 설정
+            result = await db.execute(select(User).where(User.id == Config.SERVICE_ID))
+            user = result.scalar_one_or_none()
+
+            if user:
+                await db.execute(
+                    update(User)
+                    .where(User.id == Config.SERVICE_ID)
+                    .values(meal_admin=True)
+                )
+            else:
+                await db.execute(
+                    insert(User).values(id=Config.SERVICE_ID, meal_admin=True)
+                )
+
+            # global_admin 추가
+            result = await db.execute(select(User).where(User.id == 1))
+            global_admin = result.scalar_one_or_none()
+
+            if not global_admin:
+                await db.execute(insert(User).values(id=1, global_admin=True))
+
             await db.commit()
             logger.info("User(id=%s)의 meal_admin=True로 설정 완료", Config.SERVICE_ID)
+            logger.info(
+                "User(id=1)의 global_admin=True로 설정 완료 (존재하지 않으면 생성됨)"
+            )
         except Exception:
             await db.rollback()
-            logger.exception("SERVICE_ID 관리자 설정 중 예외 발생")
+            logger.exception("SERVICE_ID 또는 global_admin 설정 중 예외 발생")
 
 
 async def sync_restaurants():
@@ -111,19 +136,20 @@ async def sync_test_users():
         try:
             # 현재 사용자 수 확인
             user_count_result = await db.execute(select(func.count(User.id)))
-            user_count = user_count_result.scalar_one()  # scalar() 대신 scalar_one() 사용
+            user_count = (
+                user_count_result.scalar_one()
+            )  # scalar() 대신 scalar_one() 사용
 
             if user_count < Config.MIN_TEST_USERS:
-                new_users = [
-                    User()
-                    for i in range(3 - user_count)
-                ]
+                new_users = [User() for i in range(3 - user_count)]
                 if user_count == 0:
                     new_users[0].meal_admin = True
 
                 db.add_all(new_users)
                 await db.commit()
-                logger.info("DEBUG 모드 활성화: 임의 사용자 %s명 추가됨", len(new_users))
+                logger.info(
+                    "DEBUG 모드 활성화: 임의 사용자 %s명 추가됨", len(new_users)
+                )
             else:
                 logger.debug("DEBUG 모드 활성화: 사용자 수 충분함")
 
