@@ -124,7 +124,7 @@ async def get_user_info(
             email="ident@example.com",
             created_at=datetime.fromisoformat("2021-08-01T00:00:00"),
         )
-    response = await client.get(f"{Config.USER_SERVICE_URL}user/api/users/{user_id}/")
+    response = await client.get(f"{Config.USER_SERVICE_URL}/user/api/users/{user_id}/")
     try:
         response.raise_for_status()
     except Exception as e:
@@ -139,7 +139,7 @@ async def is_global_admin(user_id: int, client: AsyncClient) -> bool:
     if Config.debug:
         return user_id == 1
     response = await client.get(
-        f"{Config.USER_SERVICE_URL}user/api/users/{user_id}/is_global_admin/"
+        f"{Config.USER_SERVICE_URL}/user/api/users/{user_id}/is_global_admin/"
     )
 
     try:
