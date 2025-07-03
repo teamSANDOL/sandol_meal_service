@@ -13,6 +13,7 @@ from app.utils.lifespan import (
     sync_test_users,
     set_service_user_as_admin,
     sync_restaurants,
+    set_deleted_user,
 )
 from app.database import init_db
 
@@ -43,15 +44,18 @@ async def lifespan(app: FastAPI):
     # 4. SERVICE_ID 유저 관리자 권한 설정
     await set_service_user_as_admin()
 
-    # 5. DEBUG 모드일 때 test_user 동기화
+    # 5. deleted_user 생성
+    await set_deleted_user()
+
+    # 6. DEBUG 모드일 때 test_user 동기화
     await sync_test_users()
 
-    # 6. 스케줄러 시작
+    # 7. 스케줄러 시작
     start_scheduler()
 
     yield  # FastAPI 실행 유지
 
-    # 7. 종료 작업
+    # 8. 종료 작업
     stop_scheduler()
     logger.info("🛑 서비스 종료: 정리 작업 완료")
 

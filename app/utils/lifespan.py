@@ -133,3 +133,14 @@ async def sync_test_users():
             logger.warning("중복된 test_user가 감지되었습니다.")
             await db.rollback()
             logger.debug("DB 롤백 완료")
+
+
+async def set_deleted_user():
+    """id=999999인 deleted_user를 생성"""
+    async with AsyncSessionLocal() as db:
+        deleted_user = await db.get(User, Config.DELETED_USER_ID)
+        if not deleted_user:
+            deleted_user = User(id=Config.DELETED_USER_ID, meal_admin=False)
+            db.add(deleted_user)
+            await db.commit()
+            logger.info("Deleted user (id=%s) 생성 완료", Config.DELETED_USER_ID)
