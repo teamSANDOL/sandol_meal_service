@@ -13,7 +13,6 @@ from app.utils.lifespan import (
     sync_test_users,
     set_service_user_as_admin,
     sync_restaurants,
-    set_deleted_user,
 )
 from app.database import init_db
 
