@@ -63,7 +63,9 @@ class Restaurant(Base):
     latitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float(53), nullable=True)
 
-    owner_user: Mapped["User"] = relationship("User", foreign_keys=[owner])
+    owner_user: Mapped["User"] = relationship(
+        "User", foreign_keys=[owner], back_populates="owned_restaurants"
+    )
 
     # ✅ managers 관계 추가 (다대다 관계 설정)
     managers: Mapped[List["User"]] = relationship(
@@ -137,7 +139,8 @@ class RestaurantSubmission(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     submitter: Mapped[int] = mapped_column(
-        Integer, ForeignKey("User.id", ondelete="CASCADE"),
+        Integer,
+        ForeignKey("User.id", ondelete="CASCADE"),
         nullable=False,
     )
     submitted_time: Mapped[datetime] = mapped_column(
@@ -205,12 +208,16 @@ class OperatingHours(Base):
 
     # ✅ Restaurant와 1:N 관계
     restaurant_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("Restaurant.id"), nullable=True
+        Integer,
+        ForeignKey("Restaurant.id", ondelete="CASCADE"),
+        nullable=True,
     )
 
     # ✅ RestaurantSubmission과 1:N 관계
     submission_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("Restaurant_submission.id"), nullable=True
+        Integer,
+        ForeignKey("Restaurant_submission.id", ondelete="CASCADE"),
+        nullable=True,
     )
 
     # ✅ 1:N 관계 명확하게 지정

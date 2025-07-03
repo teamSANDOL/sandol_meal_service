@@ -37,11 +37,11 @@ async def lifespan(app: FastAPI):
     # 2. meal_type 동기화
     await sync_meal_types()
 
-    # 3. Restaurant 동기화
-    await sync_restaurants()
-
-    # 4. SERVICE_ID 유저 관리자 권한 설정
+    # 3. SERVICE_ID 유저 관리자 권한 설정
     await set_service_user_as_admin()
+
+    # 4. Restaurant 동기화
+    await sync_restaurants()
 
     # 5. DEBUG 모드일 때 test_user 동기화
     await sync_test_users()

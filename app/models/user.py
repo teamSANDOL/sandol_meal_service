@@ -3,7 +3,8 @@
 from typing import List, TYPE_CHECKING
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Integer, Boolean
+from sqlalchemy import Integer, Boolean, event
+from sqlalchemy.orm.session import object_session
 
 from app.database import Base
 from app.models.associations import restaurant_manager_association
@@ -38,5 +39,25 @@ class User(Base):
         passive_deletes=True,
     )
     submitted_restaurants: Mapped[List["RestaurantSubmission"]] = relationship(
-        "RestaurantSubmission", back_populates="submitter_user", cascade="all, delete-orphan", passive_deletes=True
+        "RestaurantSubmission",
+        back_populates="submitter_user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
+
+
+@event.listens_for(User, "before_delete")
+def _user_before_delete(mapper, connection, target):
+    """사용자 삭제 시 관련 레스토랑을 소프트 삭제하고 관리자 목록을 정리합니다."""
+    session = object_session(target)
+    if session is None:
+        return
+
+    for restaurant in list(target.owned_restaurants):
+        restaurant.soft_delete()
+        session.add(restaurant)
+
+    for restaurant in list(target.managed_restaurants):
+        if target in restaurant.managers:
+            restaurant.managers.remove(target)
+            session.add(restaurant)

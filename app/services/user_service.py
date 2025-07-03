@@ -1,5 +1,4 @@
 from fastapi import HTTPException
-from httpx import AsyncClient
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -65,5 +64,12 @@ async def delete_user_process(session: AsyncSession, user_id: int):
     )
     for restaurant in result.scalars():
         restaurant.soft_delete()
+
+    managed = await session.execute(
+        select(Restaurant).join(Restaurant.managers).filter(User.id == user.id)
+    )
+    for restaurant in managed.scalars():
+        if user in restaurant.managers:
+            restaurant.managers.remove(user)
 
     await session.delete(user)
