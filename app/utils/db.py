@@ -5,15 +5,18 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException
 from httpx import AsyncClient
-from sqlalchemy.exc import IntegrityError
+from keycloak import KeycloakAdmin
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
+
 
 from app.config import Config, logger
 from app.database import AsyncSessionLocal
-from app.models.user import User  # User 모델이 models 디렉토리에 있다고 가정
-from app.schemas.restaurants import UserSchema
-from app.utils.http import get_async_client
+from app.models.user import User
+from app.models.restaurants import Restaurant
+from app.services.user_service import keycloak_user_exists_by_id, check_admin_user
 
 
 async def get_db():
@@ -26,63 +29,115 @@ async def get_db():
         yield db
 
 
+async def get_user_by_id(db: AsyncSession, user_id: str) -> User | None:
+    """주어진 user_id로 사용자를 조회합니다."""
+    return await db.scalar(select(User).where(User.id == user_id))
+
+
+async def create_user(user_id: str, db: AsyncSession, check_existance=True) -> User:
+    """사용자를 생성하는 비즈니스 로직.
+
+    사용자가 이미 존재하는지 확인하는 옵션을 포함합니다.
+    해당 옵션은 가급적 활성화해야 합니다.
+
+    Args:
+        user_id (str): 생성할 계정의 keycloak id
+        db (AsyncSession): 비동기 데이터베이스 세션.
+
+    Raises:
+        HTTPException: 사용자 정보가 외부 서비스에 존재하지 않거나,
+                        이미 존재하는 경우 오류 발생.
+
+    Returns:
+        User: 생성된 사용자 객체.
+    """
+    if check_existance:
+        existing = await get_user_by_id(db, user_id)
+        if existing:
+            raise HTTPException(
+                status_code=Config.HttpStatus.CONFLICT,
+                detail="User already exists",
+            )
+
+    if not await keycloak_user_exists_by_id(user_id):  # 외부 서비스에서 사용자 존재 여부 확인
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="User not found in User service",
+        )
+
+    user = User(user_id=user_id)
+    db.add(user)
+    try:
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="DB Commit Failure",
+        ) from e
+    await db.refresh(user)
+    return user
+
+
+async def delete_user(db: AsyncSession, user_id: str):
+    """사용자를 삭제하고 해당 사용자가 소유한 식당을 소프트 삭제합니다.
+
+    Args:
+        db (AsyncSession): 비동기 데이터베이스 세션
+        user_id (str): 삭제할 사용자의 ID
+    Raises:
+        HTTPException: 사용자가 존재하지 않을 경우 404 오류 발생
+    """
+    stmt = select(User).where(User.user_id == user_id)  # ← DB 컬럼명에 맞게
+    user = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+
+    result = await db.execute(
+        select(Restaurant)
+        .options(selectinload(Restaurant.managers))  # managers 미리 로드
+        .where(Restaurant.owner == user.id)
+    )
+    for restaurant in result.scalars():
+        restaurant.soft_delete()
+
+    managed = await db.execute(
+        select(Restaurant).join(Restaurant.managers).filter(User.id == user.id)
+    )
+    for restaurant in managed.scalars():
+        if user in restaurant.managers:
+            restaurant.managers.remove(user)
+
+    # 💡 중간 flush로 관계 정리
+    await db.flush()
+
+    await db.delete(user)
+
+
 async def get_or_create_user(
-    user_id: int,
+    user_id: str,
     db: AsyncSession,
-    client: AsyncClient,
 ) -> User:
     """DB에서 사용자 조회, 없으면 외부에서 받아와 생성"""
-    result = await db.execute(select(User).filter(User.id == user_id))
-    user = result.scalars().first()
+    user = await get_user_by_id(db, user_id)
     if user:
         return user
 
-    logger.info("사용자 정보 없음, 외부 API에서 사용자 정보 조회")
-    try:
-        user_info: UserSchema = await get_user_info(user_id, client)
-        user = User(id=user_info.id)
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        logger.info("사용자 정보 DB에 추가 완료")
-        logger.debug(
-            "사용자 정보 DB에 추가 완료 %s",
-            {
-                "id": user.id,
-                "email": user_info.email,
-                "name": user_info.name,
-                "global_admin": user_info.global_admin,
-                "created_at": user_info.created_at,
-            },
-        )
-        return user
-    except IntegrityError as e:
-        await db.rollback()
-        # 다른 트랜잭션에서 먼저 추가되었을 수 있음 → 재조회
-        result = await db.execute(select(User).filter(User.id == user_id))
-        user = result.scalars().first()
-        if user:
-            return user
-        raise HTTPException(
-            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
-            detail="사용자 추가 중 예외 발생",
-        ) from e
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail=str(e)
-        ) from e
+    logger.info("사용자 정보 없음, 사용자 존재 여부 외부 확인", extra={"user_id": user_id})
+
+    return await create_user(user_id, db, check_existance=False)
 
 
 async def get_current_user(
     db: Annotated[AsyncSession, Depends(get_db)],
-    client: Annotated[AsyncClient, Depends(get_async_client)],
-    x_user_id: int = Header(None),
+    x_user_id: str = Header(None),
 ) -> User:
     """X-User-ID 헤더를 가져와 비동기 방식으로 User 객체를 반환합니다.
 
     Args:
-        x_user_id (int): 요청 헤더에서 가져온 사용자 ID
+        x_user_id (str): 요청 헤더에서 가져온 사용자 ID
         db (AsyncSession): 비동기 데이터베이스 세션
         client: AsyncClient: 비동기 HTTP 클라이언트
 
@@ -97,100 +152,17 @@ async def get_current_user(
             status_code=Config.HttpStatus.UNAUTHORIZED,
             detail="X-User-ID 헤더가 필요합니다.",
         )
-    return await get_or_create_user(x_user_id, db, client)
-
-
-async def get_user_info(
-    user_id: int,
-    client: AsyncClient,
-) -> UserSchema:
-    """사용자 정보를 가져와 UserSchema 객체를 반환합니다.
-
-    Args:
-        user_id (int): 사용자 ID
-        client (AsyncClient): 비동기 HTTP 클라이언트
-
-    Returns:
-        UserSchema: 사용자 정보가 담긴 스키마 객체
-
-    Raises:
-        HTTPException: 사용자 정보 조회 실패 시
-    """
-    if Config.debug and user_id == 1:  # noqa: PLR2004
-        return UserSchema(
-            id=1,
-            global_admin=True,
-            name="테스트 사용자",
-            email="ident@example.com",
-            created_at=datetime.fromisoformat("2021-08-01T00:00:00"),
-        )
-    response = await client.get(f"{Config.USER_SERVICE_URL}/user/api/users/{user_id}/")
-    try:
-        response.raise_for_status()
-    except Exception as e:
-        raise HTTPException(
-            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail=str(e)
-        ) from e
-    return UserSchema.model_validate(response.json(), strict=False)
-
-
-async def is_global_admin(user_id: int, client: AsyncClient) -> bool:
-    """User API 서버에 요청하여 global_admin 여부 확인"""
-    if Config.debug:
-        return user_id == 1
-    response = await client.get(
-        f"{Config.USER_SERVICE_URL}/user/api/users/{user_id}/is_global_admin/"
-    )
-
-    try:
-        response.raise_for_status()
-    except Exception as e:
-        raise HTTPException(
-            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail=str(e)
-        ) from e
-
-    return response.json().get("is_global_admin", False)
-
-
-async def check_admin_user(
-    user: User,
-    client: AsyncClient,
-    *,
-    raise_forbidden: bool = True,
-) -> bool:
-    """사용자가 관리자 권한을 가지고 있는지 확인합니다.
-
-    Args:
-        user (UserSchema): 사용자 정보가 담긴 스키마 객체
-        client (AsyncClient): 비동기 HTTP
-        raise_forbidden (bool): 관리자 권한이 없을 경우 예외를 발생시킬지 여부
-            (기본값: True)
-
-    Returns:
-        bool: 관리자 권한 여부
-
-    Raises:
-        HTTPException: 사용자가 관리자 권한이 없는 경우
-    """
-    if user.meal_admin or await is_global_admin(user.id, client):
-        return True
-    if not raise_forbidden:
-        return False
-    logger.warning("관리자 권한 없음", extra={"user_id": user.id})
-    raise HTTPException(
-        status_code=Config.HttpStatus.FORBIDDEN, detail="관리자 권한이 필요합니다."
-    )
+    return await get_or_create_user(x_user_id, db)
 
 
 async def get_admin_user(
     db: Annotated[AsyncSession, Depends(get_db)],
-    client: Annotated[AsyncClient, Depends(get_async_client)],
-    x_user_id: int = Header(None),
+    x_user_id: str = Header(None),
 ) -> User:
     """현재 사용자가 관리자 권한을 가지고 있는지 확인하고 UserSchema 객체를 반환합니다.
 
     Args:
-        x_user_id (int): 요청 헤더에서 가져온 사용자 ID
+        x_user_id (str): 요청 헤더에서 가져온 사용자 ID
         db (AsyncSession): 비동기 데이터베이스 세션
         client (AsyncClient): 비동기 HTTP 클라이언트
 
@@ -200,6 +172,6 @@ async def get_admin_user(
     Raises:
         HTTPException: X-User-ID 헤더가 없거나 사용자가 존재하지 않는 경우
     """
-    user = await get_current_user(db, client, x_user_id)
-    await check_admin_user(user, client)
+    user = await get_current_user(db, x_user_id)
+    await check_admin_user(user.user_id)
     return user

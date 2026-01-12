@@ -1,81 +1,88 @@
+"""Authentication Service Module."""
+
 from fastapi import HTTPException
-from sqlalchemy.exc import SQLAlchemyError
+from keycloak import KeycloakGetError, KeycloakOpenID, KeycloakAdmin
+from keycloak.exceptions import KeycloakError
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
 
-from app.config import Config
-from app.models.user import User
-from app.models.restaurants import Restaurant
-from app.schemas.users import UserCreate
+from app.config import Config, logger
+from app.schemas.users import UserSchema
+
+def get_keycloak_client() -> KeycloakOpenID:
+    """동기 KeycloakOpenID 인스턴스를 생성합니다."""
+    return KeycloakOpenID(
+        server_url=Config.KC_SERVER_URL,
+        realm_name=Config.KC_REALM,
+        client_id=Config.KC_CLIENT_ID,
+        client_secret_key=Config.KC_CLIENT_SECRET,
+        timeout=10,
+    )
 
 
-async def create_user_process(user_in: UserCreate, db: AsyncSession) -> User:
-    """사용자를 생성하는 비즈니스 로직.
+def get_keycloak_admin_client() -> KeycloakAdmin:
+    """KeycloakAdmin 인스턴스를 생성합니다."""
+    return KeycloakAdmin(
+        server_url = Config.KC_SERVER_URL,
+        realm_name=Config.KC_REALM,
+        client_id=Config.KC_CLIENT_ID,
+        client_secret_key=Config.KC_CLIENT_SECRET,
+        verify=True,
+        timeout=10,
+    )
 
-    Args:
-        user_in (UserCreate): 사용자 생성에 필요한 정보.
-        db (AsyncSession): 비동기 데이터베이스 세션.
 
-    Raises:
-        HTTPException: 사용자 정보가 외부 서비스에 존재하지 않거나,
-                          이미 존재하는 경우 오류 발생.
-
-    Returns:
-        User: 생성된 사용자 객체.
+async def keycloak_user_exists_by_id(user_id: str) -> bool:
     """
-    existing_user = await db.scalar(select(User).where(User.id == user_in.id))
-    if existing_user:
-        raise HTTPException(
-            status_code=Config.HttpStatus.CONFLICT,
-            detail="User already exists",
-        )
+    user_id(=Keycloak user_id)로 사용자 존재 여부만 확인합니다.
 
-    user = User(**user_in.model_dump())
-    db.add(user)
+    - 존재: True
+    - 404: False
+    - 그 외: 예외
+    """
+    admin = get_keycloak_admin_client()
     try:
-        await db.commit()
-    except SQLAlchemyError as e:
-        await db.rollback()
+        await admin.a_get_user(user_id=user_id)  # sub가 Keycloak user UUID라는 전제
+        return True
+    except KeycloakGetError as e:
+        if getattr(e, "response_code", None) == Config.HttpStatus.NOT_FOUND:
+            return False
+    except KeycloakError as e:
+        logger.error("Keycloak 사용자 조회 중 오류 발생", exc_info=e)
         raise HTTPException(
             status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
-            detail="DB Commit Failure",
+            detail="사용자 조회 중 오류가 발생했습니다.",
         ) from e
-    await db.refresh(user)
-    return user
+    return False
 
 
-async def delete_user_process(session: AsyncSession, user_id: int):
-    """사용자를 삭제하고 해당 사용자가 소유한 식당을 소프트 삭제합니다.
+async def check_admin_user(keycloak_user_id: str) -> bool:
+    """global_admin(realm) OR meal_admin(client) 여부 확인"""
+    keycloak_admin: KeycloakAdmin = get_keycloak_admin_client()
 
-    Args:
-        session (AsyncSession): 비동기 데이터베이스 세션
-        user_id (int): 삭제할 사용자의 ID
-    Raises:
-        HTTPException: 사용자가 존재하지 않을 경우 404 오류 발생
-    """
-    user = await session.get(User, user_id)
-    if not user:
-        raise HTTPException(
-            status_code=Config.HttpStatus.NOT_FOUND, detail="User not found"
+    try:
+        # 1) realm role 확인
+        realm_roles = await keycloak_admin.a_get_realm_roles_of_user(keycloak_user_id)
+        if any(r.get("name") == Config.REALM_GLOBAL_ADMIN_ROLE for r in (realm_roles or [])):
+            return True
+
+        # 2) client role 확인 (meal_admin)
+        client_uuid = await keycloak_admin.a_get_client_id(Config.KC_CLIENT_ID)
+        if not client_uuid:
+            return False
+
+        client_roles = await keycloak_admin.a_get_client_roles_of_user(
+            user_id=keycloak_user_id,
+            client_id=client_uuid,
         )
+        if any(r.get("name") == Config.MEAL_CLIENT_ADMIN_ROLE for r in (client_roles or [])):
+            return True
 
-    result = await session.execute(
-        select(Restaurant)
-        .options(selectinload(Restaurant.managers))  # managers 미리 로드
-        .where(Restaurant.owner == user.id)
-    )
-    for restaurant in result.scalars():
-        restaurant.soft_delete()
+        return False
 
-    managed = await session.execute(
-        select(Restaurant).join(Restaurant.managers).filter(User.id == user.id)
-    )
-    for restaurant in managed.scalars():
-        if user in restaurant.managers:
-            restaurant.managers.remove(user)
+    except Exception as e:
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail=f"Keycloak admin check failed: {e}",
+        ) from e
 
-    # 💡 중간 flush로 관계 정리
-    await session.flush()
-
-    await session.delete(user)
