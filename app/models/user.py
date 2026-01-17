@@ -1,9 +1,10 @@
 """이 모듈은 사용자 정보를 저장하는 User 클래스를 정의합니다."""
 
+from datetime import datetime, timezone
 from typing import List, TYPE_CHECKING
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Integer, Boolean, event
+from sqlalchemy import DateTime, Integer, Boolean, event, String, func
 from sqlalchemy.orm.session import object_session
 
 from app.database import Base
@@ -18,15 +19,22 @@ class User(Base):
 
     속성:
         id (int): 사용자의 고유 ID
+        user_id (str): 사용자의 Keycloak ID
+        created_at (datetime): 사용자가 생성된 시간
         owned_restaurants (List[Restaurant]): 사용자가 소유한 레스토랑 목록
         managed_restaurants (List[Restaurant]): 사용자가 관리하는 레스토랑 목록
         submitted_restaurants (List[RestaurantSubmission]): 사용자가 제출한 레스토랑 제출 목록
     """
 
     __tablename__ = "User"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    meal_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),  # 앱 레벨
+        server_default=func.now(),                   # DB 레벨
+    )
 
     owned_restaurants: Mapped[List["Restaurant"]] = relationship(
         "Restaurant", back_populates="owner_user"
@@ -47,7 +55,7 @@ class User(Base):
 
 
 @event.listens_for(User, "before_delete")
-def _user_before_delete(mapper, connection, target):
+def _user_before_delete(_, __, target):
     """사용자 삭제 시 관련 레스토랑을 소프트 삭제하고 관리자 목록을 정리합니다."""
     session = object_session(target)
     if session is None:
