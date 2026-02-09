@@ -31,7 +31,7 @@ async def get_db():
 
 async def get_user_by_id(db: AsyncSession, user_id: str) -> User | None:
     """주어진 user_id로 사용자를 조회합니다."""
-    return await db.scalar(select(User).where(User.id == user_id))
+    return await db.scalar(select(User).where(User.user_id == user_id))
 
 
 async def create_user(user_id: str, db: AsyncSession, check_existance=True) -> User:
@@ -59,7 +59,9 @@ async def create_user(user_id: str, db: AsyncSession, check_existance=True) -> U
                 detail="User already exists",
             )
 
-    if not await keycloak_user_exists_by_id(user_id):  # 외부 서비스에서 사용자 존재 여부 확인
+    if not await keycloak_user_exists_by_id(
+        user_id
+    ):  # 외부 서비스에서 사용자 존재 여부 확인
         raise HTTPException(
             status_code=Config.HttpStatus.NOT_FOUND,
             detail="User not found in User service",
@@ -94,7 +96,6 @@ async def delete_user(db: AsyncSession, user_id: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-
     result = await db.execute(
         select(Restaurant)
         .options(selectinload(Restaurant.managers))  # managers 미리 로드
@@ -125,7 +126,9 @@ async def get_or_create_user(
     if user:
         return user
 
-    logger.info("사용자 정보 없음, 사용자 존재 여부 외부 확인", extra={"user_id": user_id})
+    logger.info(
+        "사용자 정보 없음, 사용자 존재 여부 외부 확인", extra={"user_id": user_id}
+    )
 
     return await create_user(user_id, db, check_existance=False)
 
@@ -173,5 +176,40 @@ async def get_admin_user(
         HTTPException: X-User-ID 헤더가 없거나 사용자가 존재하지 않는 경우
     """
     user = await get_current_user(db, x_user_id)
-    await check_admin_user(user.user_id)
+    admin_user = await check_admin_user(user)
+    if not admin_user.is_admin:
+        raise HTTPException(
+            status_code=Config.HttpStatus.FORBIDDEN,
+            detail="관리자 권한이 필요합니다.",
+        )
     return user
+
+
+async def resolve_user_ids(
+    db: AsyncSession,
+    owner_user_id: str | None = None,
+    manager_user_id: str | None = None,
+) -> tuple[int | None, int | None]:
+    """owner_user_id와 manager_user_id를 각각 User.id로 반환합니다.
+
+    Args:
+        db (AsyncSession): db 세션
+        owner_user_id (str | None, optional): 식당 소유자 user_id. Defaults to None.
+        manager_user_id (str | None, optional): 식당 관리자 user_id. Defaults to None.
+
+    Returns:
+        tuple[int | None, int | None]: ownser_id와 manager_id가 담긴 튜플
+    """
+    owner_id = manager_id = None
+
+    if owner_user_id:
+        result = await db.execute(select(User.id).where(User.user_id == owner_user_id))
+        owner_id = result.scalar_one_or_none()
+
+    if manager_user_id:
+        result = await db.execute(
+            select(User.id).where(User.user_id == manager_user_id)
+        )
+        manager_id = result.scalar_one_or_none()
+
+    return owner_id, manager_id

@@ -53,7 +53,7 @@ from app.schemas.meals import (
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
-from app.schemas.users import UserSchema
+from app.schemas.users import AdminUserSchema
 from app.services.crawler_service import download_and_save_excel_to_db
 from app.utils.http import get_async_client
 from app.utils.db import get_admin_user, get_current_user, get_db
@@ -438,7 +438,7 @@ async def delete_meal(
         raise HTTPException(status_code=404, detail="Meal not found")
 
     # ✅ 2️⃣ `get_restaurant_with_permission()` 활용 → **권한 검증 & 레스토랑 객체 반환**
-    await get_restaurant_with_permission(meal.restaurant_id, db, client, current_user)
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
     # ✅ 3️⃣ Meal 삭제 트랜잭션 실행
     await delete_meal_transaction(db, meal)
@@ -449,14 +449,14 @@ async def delete_meal(
 async def force_sync_meal(
     db: Annotated[AsyncSession, Depends(get_db)],
     client: Annotated[AsyncClient, Depends(get_async_client)],
-    current_user: Annotated[UserSchema, Depends(get_admin_user)],
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
 ):
     """학식 정보를 강제로 동기화합니다.
 
     이 함수는 학식 정보를 학교 사이트에서 다운로드하여 데이터베이스에 저장합니다.
 
     Args:
-        current_user (Annotated[UserSchema, Depends]): 요청을 보낸 현재 사용자 객체입니다.
+        current_user (Annotated[AdminUserSchema, Depends]): 요청을 보낸 현재 사용자 객체입니다.
 
     Raises:
         HTTPException: 동기화 중 오류가 발생한 경우 발생합니다.
@@ -503,7 +503,7 @@ async def register_meal(
         restaurant_id,
     )
 
-    await get_restaurant_with_permission(restaurant_id, db, client, current_user)
+    await get_restaurant_with_permission(restaurant_id, db, current_user)
     meal_type = await get_meal_type(db, meal_register.meal_type)
 
     new_meal = Meal(
@@ -566,7 +566,7 @@ async def delete_menu(
             status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
         )
 
-    await get_restaurant_with_permission(meal.restaurant_id, db, client, current_user)
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
     updated_menu = delete_meal_menu(meal, menu_delete.menu)
     await update_meal_menu_transaction(db, meal, updated_menu)
@@ -613,7 +613,7 @@ async def edit_meal_menu(
             status_code=Config.HttpStatus.NOT_FOUND, detail="Meal not found"
         )
 
-    await get_restaurant_with_permission(meal.restaurant_id, db, client, current_user)
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
 
     updated_menu = update_meal_menu(meal, menu_edit.menu)
     await update_meal_menu_transaction(db, meal, updated_menu)

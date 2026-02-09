@@ -53,7 +53,7 @@ class Config:
 
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
-    SERVICE_ID: int = int(os.getenv("SERVICE_ID", "6"))
+    SERVICE_ID: str = str(os.getenv("SERVICE_ID", "6"))
     SERVICE_ACCOUNT_SUB: str | None = os.getenv("SERVICE_ACCOUNT_SUB")
     SERVICE_ACCOUNT_TOKEN: str | None = os.getenv("SERVICE_ACCOUNT_TOKEN")
     SERVICE_ACCOUNT_TOKEN_TYPE: str = os.getenv("SERVICE_ACCOUNT_TOKEN_TYPE", "Bearer")
@@ -77,10 +77,10 @@ class Config:
     TZ = timezone(TIMEZONE)
 
     MIN_TEST_USERS = 2
-    KC_SERVER_URL = os.getenv("KC_SERVER_URL", "https://sandol.sio2.kr/auth/")
-    KC_CLIENT_ID = os.getenv("KC_CLIENT_ID", "sandol-kakao-bot")
+    KC_SERVER_URL = os.getenv("KC_SERVER_URL", "https://sandol.house.sio2.kr/auth/")
+    KC_CLIENT_ID = os.getenv("KC_CLIENT_ID", "sandol-meal-service")
     KC_REALM = os.getenv("KC_REALM", "Sandori")
-    KC_CLIENT_SECRET = os.getenv("KC_CLIENT_SECRET", "your-kakao-bot-client-secret")
+    KC_CLIENT_SECRET = os.getenv("KC_CLIENT_SECRET", "your-meal-service-client-secret")
 
     REALM_GLOBAL_ADMIN_ROLE = "global_admin"
     MEAL_CLIENT_ADMIN_ROLE = "meal_admin"

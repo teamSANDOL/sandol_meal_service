@@ -48,11 +48,17 @@ from app.schemas.restaurants import (
     RestaurantResponse,
     SubmissionResponse,
     TimeRange,
-    UserSchema,
     RejectRestaurantRequest,
+    RestaurantSubmission as RestaurantSubmissionSchema,
 )
-from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
-from app.utils.db import get_admin_user, get_current_user, get_db, check_admin_user
+from app.schemas.users import AdminUserSchema
+from app.utils.db import (
+    get_admin_user,
+    get_current_user,
+    get_db,
+    check_admin_user,
+    resolve_user_ids,
+)
 from app.utils.restaurants import (
     build_location_schema,
     build_operating_hours_entries,
@@ -92,7 +98,8 @@ async def restaurant_submit_get_requests(
     logger.info("Get requests received by user: %s", current_user.id)
 
     # 요청자가 관리자인 경우 모든 요청 조회
-    if await check_admin_user(current_user, client, raise_forbidden=False):  # type: ignore
+    admin_user: AdminUserSchema = await check_admin_user(current_user)
+    if admin_user.is_admin:
         result = await db.execute(select(RestaurantSubmission))
         submissions = result.scalars().all()
     else:
@@ -201,7 +208,7 @@ async def restaurant_submit_approval(
     request_id: int,
     submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[UserSchema, Depends(get_admin_user)],
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
 ):
     """식당 등록 요청을 승인합니다.
 
@@ -212,7 +219,7 @@ async def restaurant_submit_approval(
         request_id (int): 승인할 식당 등록 요청의 고유 ID입니다.
         submission (RestaurantSubmission): 승인할 제출 요청 객체입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
-        current_user (UserSchema): 현재 요청을 보낸 관리자 사용자 객체입니다.
+        current_user (AdminUserSchema): 현재 요청을 보낸 관리자 사용자 객체입니다.
 
     Returns:
         BaseSchema[ApproverResponse]: 승인된 식당 정보를 포함한 응답 객체입니다.
@@ -289,7 +296,7 @@ async def restaurant_submit_rejection(
     submission: Annotated[RestaurantSubmission, Depends(get_submission_or_404)],
     request_body: RejectRestaurantRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[UserSchema, Depends(get_admin_user)],
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
 ):
     """식당 등록 요청을 거절합니다.
 
@@ -529,8 +536,8 @@ async def delete_restaurant(
 async def get_restaurants(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    owner_id: int = Query(None, description="식당 소유자 ID"),
-    manager_id: int = Query(None, description="식당 관리자 ID"),
+    owner_user_id: str = Query(None, description="식당 소유자 user_id"),
+    manager_user_id: str = Query(None, description="식당 관리자 user_id"),
     name: str = Query(None, description="식당 이름 (부분 일치)"),
     establishment_type: Literal["student", "vendor", "external"] = Query(
         None, description="식당 유형(student|vendor|external)"
@@ -542,8 +549,8 @@ async def get_restaurants(
     Args:
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
-        owner_id (int, optional): 소유자 ID로 필터링
-        manager_id (int, optional): 관리자 ID로 필터링
+        owner_id (str, optional): 소유자 ID로 필터링
+        manager_id (str, optional): 관리자 ID로 필터링
         name (str, optional): 식당 이름(부분 일치)으로 필터링
         establishment_type (str, optional): 식당 유형(student|vendor|external)
         is_campus (bool, optional): 캠퍼스 내 식당 여부
@@ -551,6 +558,11 @@ async def get_restaurants(
     Returns:
         CustomPage[RestaurantResponse]: 식당 데이터 목록을 포함한 페이징된 응답 객체입니다.
     """
+    owner_id, manager_id = await resolve_user_ids(
+        db,
+        owner_user_id,
+        manager_user_id,
+    )
     stmt = select(Restaurant)
 
     if owner_id:
@@ -611,6 +623,7 @@ async def get_restaurants(
             dinner_time=operating_hours_dict.get("dinner_time"),
         )
         restaurant_schemas.append(response_data)
+    logger.info("Total restaurants found: %d\nRestaurants: %s", len(restaurant_schemas), restaurant_schemas)
 
     return paginate(restaurant_schemas, params)
 
