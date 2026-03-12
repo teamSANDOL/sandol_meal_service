@@ -202,13 +202,29 @@ async def resolve_user_ids(
     """
     owner_id = manager_id = None
 
-    if owner_user_id:
-        result = await db.execute(select(User.id).where(User.user_id == owner_user_id))
+    if owner_user_id is not None:
+        normalized_owner_user_id = owner_user_id.strip()
+        if not normalized_owner_user_id:
+            raise HTTPException(
+                status_code=Config.HttpStatus.BAD_REQUEST,
+                detail="owner_user_id는 비어 있을 수 없습니다.",
+            )
+
+        result = await db.execute(
+            select(User.id).where(User.user_id == normalized_owner_user_id)
+        )
         owner_id = result.scalar_one_or_none()
 
-    if manager_user_id:
+    if manager_user_id is not None:
+        normalized_manager_user_id = manager_user_id.strip()
+        if not normalized_manager_user_id:
+            raise HTTPException(
+                status_code=Config.HttpStatus.BAD_REQUEST,
+                detail="manager_user_id는 비어 있을 수 없습니다.",
+            )
+
         result = await db.execute(
-            select(User.id).where(User.user_id == manager_user_id)
+            select(User.id).where(User.user_id == normalized_manager_user_id)
         )
         manager_id = result.scalar_one_or_none()
 

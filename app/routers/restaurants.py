@@ -28,7 +28,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
-from sqlalchemy import case, delete
+from sqlalchemy import case, delete, false, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from httpx import AsyncClient
@@ -558,6 +558,9 @@ async def get_restaurants(
     Returns:
         CustomPage[RestaurantResponse]: 식당 데이터 목록을 포함한 페이징된 응답 객체입니다.
     """
+    owner_filter_requested = owner_user_id is not None
+    manager_filter_requested = manager_user_id is not None
+
     owner_id, manager_id = await resolve_user_ids(
         db,
         owner_user_id,
@@ -565,11 +568,17 @@ async def get_restaurants(
     )
     stmt = select(Restaurant)
 
-    if owner_id:
-        stmt = stmt.where(Restaurant.owner == owner_id)
-    if manager_id:
-        # Many-to-many 구조라 가정
-        stmt = stmt.where(Restaurant.managers.any(id=manager_id))
+    user_filters = []
+    if owner_filter_requested and owner_id is not None:
+        user_filters.append(Restaurant.owner == owner_id)
+    if manager_filter_requested and manager_id is not None:
+        user_filters.append(Restaurant.managers.any(id=manager_id))
+
+    if owner_filter_requested or manager_filter_requested:
+        if user_filters:
+            stmt = stmt.where(or_(*user_filters))
+        else:
+            stmt = stmt.where(false())
     if name:
         stmt = stmt.where(Restaurant.name.contains(name))
         stmt = stmt.order_by(
@@ -623,7 +632,11 @@ async def get_restaurants(
             dinner_time=operating_hours_dict.get("dinner_time"),
         )
         restaurant_schemas.append(response_data)
-    logger.info("Total restaurants found: %d\nRestaurants: %s", len(restaurant_schemas), restaurant_schemas)
+    logger.info(
+        "Total restaurants found: %d\nRestaurants: %s",
+        len(restaurant_schemas),
+        restaurant_schemas,
+    )
 
     return paginate(restaurant_schemas, params)
 
