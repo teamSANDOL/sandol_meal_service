@@ -180,3 +180,6 @@ db_data/
 
 .vscode/
 tmp/
+
+# MacOS
+.DS_Store
