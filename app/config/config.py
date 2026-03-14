@@ -43,6 +43,18 @@ console_handler.setFormatter(console_formatter)
 # 로거에 핸들러 추가
 logger.addHandler(console_handler)
 
+def database_url():
+    """데이터베이스 URL을 반환하는 함수
+
+    Returns:
+        str: 데이터베이스 URL
+    """
+    postgres_db = os.getenv("POSTGRES_DB", "meal_service")
+    postgres_user = os.getenv("POSTGRES_USER", "postgres")
+    postgres_password = os.getenv("POSTGRES_PASSWORD", "postgres")
+    postgres_host = os.getenv("POSTGRES_HOST", "meal-service-db")
+    postgres_port = os.getenv("POSTGRES_PORT", "5432")
+    return f"postgresql+asyncpg://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
 
 class Config:
     """FastAPI 설정 값을 관리하는 클래스
@@ -69,10 +81,7 @@ class Config:
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000").rstrip(
         "/"
     )
-    DATABASE_URL = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://postgres:postgres@meal-service-db:5432/meal_service",
-    )
+    DATABASE_URL = database_url()
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
 
