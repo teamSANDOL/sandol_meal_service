@@ -11,6 +11,10 @@ class UserRead(BaseModel):
     user_id: str
 
 
+class UserCreate(BaseModel):
+    user_id: str
+
+
 class UserSchema(BaseModel):
     """사용자 정보를 나타내는 클래스입니다.
 

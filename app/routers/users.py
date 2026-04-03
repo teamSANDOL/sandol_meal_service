@@ -7,64 +7,29 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.config import Config, logger
 from app.models.user import User
-from app.schemas.users import UserRead, UserSchema
+from app.schemas.users import UserCreate, UserSchema
 from app.utils.db import get_db, get_user_by_id, create_user, delete_user
-from app.services.user_service import keycloak_user_exists_by_id
 
 router = APIRouter(prefix="/users", tags=["User"])
 
 
-@router.post("/", response_model=UserRead)
+@router.post("/", response_model=UserSchema)
 async def register_user(
-    user_id: str,
+    payload: UserCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """사용자를 등록합니다.
 
     외부 사용자 서비스에서 사용자 존재 여부를 확인 후,
     중복되지 않는 경우에만 DB에 사용자 등록.
-
-    Args:
-        user_id (str): 사용자 ID.
-        db (AsyncSession): 데이터베이스 세션.
     """
-    try:
-        existence_on_db = await get_user_by_id(db, user_id)
-    except SQLAlchemyError as e:
-        logger.error("데이터베이스 조회 중 오류 발생: %s", e)
-        raise HTTPException(
-            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
-            detail="Database query failed",
-        ) from e
-    if existence_on_db:
-        raise HTTPException(
-            status_code=Config.HttpStatus.CONFLICT,
-            detail="User already exists in database",
-        )
-    try:
-        existence = await keycloak_user_exists_by_id(user_id)
-    except HTTPException as e:
-        if e.status_code == Config.HttpStatus.NOT_FOUND:
-            raise HTTPException(
-                status_code=Config.HttpStatus.NOT_FOUND,
-                detail="User not found in User service",
-            ) from e
-        logger.error("사용자 정보 조회 중 오류 발생: %s", e)
-        raise e
-    if not existence:
-        raise HTTPException(
-            status_code=Config.HttpStatus.NOT_FOUND,
-            detail="User not found in User service",
-        )
-    logger.info("Creating user with user_id: %s", user_id)
-    return UserSchema.model_validate(await create_user(user_id, db))
+    return UserSchema.model_validate(await create_user(payload.user_id, db))
 
 
 @router.get("/{user_id}", response_model=UserSchema)
