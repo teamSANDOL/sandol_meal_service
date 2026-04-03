@@ -632,11 +632,7 @@ async def get_restaurants(
             dinner_time=operating_hours_dict.get("dinner_time"),
         )
         restaurant_schemas.append(response_data)
-    logger.info(
-        "Total restaurants found: %d\nRestaurants: %s",
-        len(restaurant_schemas),
-        restaurant_schemas,
-    )
+    logger.info("Total restaurants found: %d", len(restaurant_schemas))
 
     return paginate(restaurant_schemas, params)
 
