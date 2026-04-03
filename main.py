@@ -42,15 +42,12 @@ async def lifespan(app: FastAPI):
     # 4. Restaurant 동기화
     await sync_restaurants()
 
-    # 5. DEBUG 모드일 때 test_user 동기화
-    # await sync_test_users()
-
-    # 6. 스케줄러 시작
+    # 5. 스케줄러 시작
     start_scheduler()
 
     yield  # FastAPI 실행 유지
 
-    # 7. 종료 작업
+    # 6. 종료 작업
     stop_scheduler()
     logger.info("🛑 서비스 종료: 정리 작업 완료")
 

@@ -6,7 +6,6 @@ from pathlib import Path
 
 from sqlalchemy import update, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func
 
 from app.database import AsyncSessionLocal
 from app.models.meals import MealType
@@ -165,44 +164,3 @@ async def sync_restaurants():
         except Exception:
             await db.rollback()
             logger.exception("Restaurant 동기화 중 예외 발생")
-
-
-async def sync_test_users():
-    """DEBUG 모드일 때, 최소 2명의 test_user를 유지하도록 동기화
-
-    DEBUG 모드가 활성화된 경우, 데이터베이스에 최소 2명의 test_user가 존재하도록 동기화합니다.
-    부족한 사용자 수만큼 새로운 test_user를 추가합니다.
-
-    Raises:
-        IntegrityError: 중복된 test_user가 감지된 경우 발생합니다.
-    """
-    if not Config.debug:
-        return  # debug 모드가 아니면 실행하지 않음
-
-    async with AsyncSessionLocal() as db:
-        try:
-            # 현재 사용자 수 확인
-            user_count_result = await db.execute(select(func.count(User.id)))
-            user_count = (
-                user_count_result.scalar_one()
-            )  # scalar() 대신 scalar_one() 사용
-
-            if user_count < Config.MIN_TEST_USERS:
-                new_users = [User() for i in range(3 - user_count)]
-                if user_count == 0:
-                    new_users[0].meal_admin = True
-
-                db.add_all(new_users)
-                await db.commit()
-                logger.info(
-                    "DEBUG 모드 활성화: 임의 사용자 %s명 추가됨", len(new_users)
-                )
-            else:
-                logger.debug("DEBUG 모드 활성화: 사용자 수 충분함")
-
-        except IntegrityError:
-            message = traceback.format_exc()
-            logger.debug("Error details: %s", message)
-            logger.warning("중복된 test_user가 감지되었습니다.")
-            await db.rollback()
-            logger.debug("DB 롤백 완료")
