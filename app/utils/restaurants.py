@@ -255,9 +255,8 @@ async def get_submission_with_permission(
         )
 
     # 2️⃣ ✅ **권한 확인 (작성자 or 관리자)**
-    if submission.submitter == current_user.id or await check_admin_user(
-        current_user, client, raise_forbidden=False
-    ):
+    admin_user = await check_admin_user(current_user)
+    if submission.submitter == current_user.id or admin_user.is_admin:
         logger.info(
             "Permission granted for user %s on submission %s",
             current_user.id,
@@ -303,7 +302,6 @@ async def get_restaurant_or_404(
 async def get_restaurant_with_permission(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
-    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> Restaurant:
     """식당을 조회하면서, 동시에 사용자 권한을 확인하는 함수.
@@ -345,12 +343,14 @@ async def get_restaurant_with_permission(
             detail="해당 식당이 존재하지 않습니다.",
         )
 
-    # ✅ 2️⃣ 사용자가 관리자이거나 식당 소유자 또는 관리자인 경우 접근 허용
-    if (
+    # ✅ 2️⃣ 권한 확인 (owner/manager → admin 순서, 필요할 때만 admin 체크)
+    is_owner_or_manager = (
         restaurant.owner == current_user.id
-        or any(manager.id == current_user.id for manager in restaurant.managers)
-        or await check_admin_user(current_user, client, raise_forbidden=False)
-    ):
+        or any(m.id == current_user.id for m in restaurant.managers)
+    )
+    if not is_owner_or_manager:
+        is_owner_or_manager = (await check_admin_user(current_user)).is_admin
+    if is_owner_or_manager:
         logger.info(
             "Permission granted for user %s on restaurant %s",
             current_user.id,

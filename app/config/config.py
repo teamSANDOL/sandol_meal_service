@@ -43,6 +43,31 @@ console_handler.setFormatter(console_formatter)
 # 로거에 핸들러 추가
 logger.addHandler(console_handler)
 
+def database_url():
+    """데이터베이스 URL을 반환하는 함수.
+
+    우선순위:
+    1) DATABASE_URL (명시된 전체 URL)
+    2) POSTGRES_* 환경 변수 조합
+    """
+    explicit_url = os.getenv("DATABASE_URL")
+    if explicit_url:
+        explicit_url = explicit_url.strip()
+        if explicit_url.startswith("postgresql://"):
+            return explicit_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if explicit_url.startswith("postgresql+psycopg2://"):
+            return explicit_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+        return explicit_url
+
+    postgres_db = os.getenv("POSTGRES_DB", "meal_service")
+    postgres_user = os.getenv("POSTGRES_USER", "postgres")
+    postgres_password = os.getenv("POSTGRES_PASSWORD", "postgres")
+    postgres_host = os.getenv("POSTGRES_HOST", "meal-service-db")
+    postgres_port = os.getenv("POSTGRES_PORT", "5432")
+    return (
+        f"postgresql+asyncpg://{postgres_user}:{postgres_password}@"
+        f"{postgres_host}:{postgres_port}/{postgres_db}"
+    )
 
 class Config:
     """FastAPI 설정 값을 관리하는 클래스
@@ -53,7 +78,10 @@ class Config:
 
     debug = os.getenv("DEBUG", "False").lower() == "true"
 
-    SERVICE_ID: int = int(os.getenv("SERVICE_ID", "6"))
+    SERVICE_ACCOUNT_SUB: str | None = os.getenv("SERVICE_ACCOUNT_SUB")
+    SERVICE_ACCOUNT_TOKEN: str | None = os.getenv("SERVICE_ACCOUNT_TOKEN")
+    SERVICE_ACCOUNT_TOKEN_TYPE: str = os.getenv("SERVICE_ACCOUNT_TOKEN_TYPE", "Bearer")
+
     TIP_RESTAURANT_ID: int = int(os.getenv("TIP_RESTAURANT_ID", "1"))
     E_RESTAURANT_ID: int = int(os.getenv("E_RESTAURANT_ID", "2"))
 
@@ -65,14 +93,19 @@ class Config:
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000").rstrip(
         "/"
     )
-    DATABASE_URL = os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://postgres:postgres@meal-service-db:5432/meal_service",
-    )
+    DATABASE_URL = database_url()
     TIMEZONE = os.getenv("TIMEZONE", "Asia/Seoul")
     TZ = timezone(TIMEZONE)
 
     MIN_TEST_USERS = 2
+    KC_SERVER_URL = os.getenv("KC_SERVER_URL", "https://sandol.house.sio2.kr/auth/")
+    KC_LOCAL_URL = os.getenv("KC_LOCAL_URL", "http://keycloak:8080/auth/")
+    KC_CLIENT_ID = os.getenv("KC_CLIENT_ID", "sandol-meal-service")
+    KC_REALM = os.getenv("KC_REALM", "Sandori")
+    KC_CLIENT_SECRET = os.getenv("KC_CLIENT_SECRET", "your-meal-service-client-secret")
+
+    REALM_GLOBAL_ADMIN_ROLE = "global_admin"
+    MEAL_CLIENT_ADMIN_ROLE = "meal_admin"
 
     class HttpStatus:
         """HTTP 상태 코드를 정의하는 클래스"""

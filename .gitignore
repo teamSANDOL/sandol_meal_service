@@ -174,8 +174,12 @@ cython_debug/
 .pypirc
 
 # db파일 동기화 방지
+db_data/
 *.db
 !test*.db
 
 .vscode/
 tmp/
+
+# MacOS
+.DS_Store

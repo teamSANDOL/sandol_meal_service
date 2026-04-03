@@ -20,13 +20,26 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.inspection import inspect
 
-from app.config.config import Config
 from app.database import Base
 from app.models.associations import restaurant_manager_association
 
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.meals import Meal
+
+# Service Account의 User.id를 저장할 변수 (lifespan에서 설정)
+_service_user_id: int | None = None
+
+def set_service_user_id(user_id: int):
+    """Service Account의 User.id를 설정합니다."""
+    global _service_user_id
+    _service_user_id = user_id
+
+def get_service_user_id() -> int:
+    """Service Account의 User.id를 반환합니다."""
+    if _service_user_id is None:
+        raise RuntimeError("Service User ID가 설정되지 않았습니다.")
+    return _service_user_id
 
 
 class Restaurant(Base):
@@ -94,7 +107,7 @@ class Restaurant(Base):
         """식당을 소프트 삭제 처리 (이름 수정 + 관계 초기화 + 필드 제거)"""
         # 1. 이름·소유자·관리자 관계 초기화
         self.name = f"[삭제됨] {self.name}"
-        self.owner = int(Config.SERVICE_ID)
+        self.owner = get_service_user_id()  # Service User의 DB ID 사용
         self.managers.clear()
 
         # 2. 컬럼 검사: id, name, owner 제외 + nullable=False인 컬럼도 제외

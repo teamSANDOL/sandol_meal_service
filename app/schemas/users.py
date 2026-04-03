@@ -1,40 +1,48 @@
 from datetime import datetime
-from pydantic import BaseModel
-
-
-class UserCreate(BaseModel):
-    id: int
-    meal_admin: bool = False
+from pydantic import BaseModel, ConfigDict
 
 
 class UserRead(BaseModel):
-    id: int
-    meal_admin: bool = False
+    """사용자 등록 응답 모델입니다.
 
-    class Config:
-        from_attributes = True
+    Attributes:
+        user_id (str): 사용자의 Keycloak ID
+    """
+    user_id: str
+
+
+class UserCreate(BaseModel):
+    user_id: str
 
 
 class UserSchema(BaseModel):
     """사용자 정보를 나타내는 클래스입니다.
 
     Attributes:
-        id (int): 사용자 ID
-        name (str): 사용자 이름
-        email (str): 사용자 이메일
-        global_admin (bool) = 전역 관리자 여부
-        service_account (bool) = 서비스 API 계정 여부
-        created_at (datetime): 생성 시간
+        id (int): 사용자 db PK
+        user_id (str): 사용자 keycloak id
+        created_at (datetime): 사용자 생성 일시
     """
-
+    model_config = ConfigDict(
+        from_attributes=True,
+        extra="allow",
+    )
     id: int
-    name: str
-    email: str
-    global_admin: bool = False
-    service_account: bool = False
+    user_id: str
     created_at: datetime
 
-    class Config:
-        """정의되지 않은 필드도 허용합니다."""
+class AdminUserSchema(UserSchema):
+    """관리자 사용자 정보를 나타내는 클래스입니다.
 
-        extra = "allow"
+    Attributes:
+        global_admin (bool): 사용자가 글로벌 관리자 권한을 가지고 있는지 여부
+        meal_admin (bool): 사용자가 식사 관리자 권한을 가지고 있는지 여부
+        is_admin (bool): 사용자가 관리자 권한을 가지고 있는지 여부
+    """
+    global_admin: bool
+    meal_admin: bool
+
+    @property
+    def is_admin(self) -> bool:
+        """사용자가 관리자 권한을 가지고 있는지 여부를 반환합니다."""
+        return self.global_admin or self.meal_admin

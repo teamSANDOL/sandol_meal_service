@@ -2,7 +2,7 @@
     {
       "id": 1,
       "name": "TIP 가가식당",
-      "owner": 6,
+      "owner": "6d935940-d4c5-4800-93c1-c2c6e0bd3944",
       "is_campus": true,
       "establishment_type": "student",
       "building_name": "TIP",
@@ -14,7 +14,7 @@
     {
       "id": 2,
       "name": "E동 레스토랑",
-      "owner": 6,
+      "owner": "6d935940-d4c5-4800-93c1-c2c6e0bd3944",
       "is_campus": true,
       "establishment_type": "student",
       "building_name": "E동",

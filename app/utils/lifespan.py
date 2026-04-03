@@ -4,16 +4,15 @@ import traceback
 import json
 from pathlib import Path
 
-from sqlalchemy import insert, update, select, text
+from sqlalchemy import update, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.future import select
-from sqlalchemy import func
 
 from app.database import AsyncSessionLocal
 from app.models.meals import MealType
-from app.models.restaurants import Restaurant
+from app.models.restaurants import Restaurant, set_service_user_id
 from app.models.user import User
 from app.config import Config, logger
+from app.services.user_service import keycloak_user_exists_by_id
 
 
 async def sync_meal_types():
@@ -59,42 +58,84 @@ async def sync_meal_types():
             logger.debug("DB 롤백 완료")
 
 
-async def set_service_user_as_admin():
-    """Config.SERVICE_ID 유저의 meal_admin을 True로 설정, ID=1 유저를 global_admin으로 추가"""
+async def ensure_service_account_in_db() -> None:
+    """
+    서버 실행 전:
+    - Keycloak에 존재하는 service_account를 DB(User 테이블)에 1회만 등록한다.
+    - 이미 있으면 아무 것도 하지 않는다.
+    - Keycloak에 없으면 DB에 추가하지 않는다(오류로 처리).
+    - 생성된 User.id를 set_service_user_id로 설정한다.
+    """
     async with AsyncSessionLocal() as db:
+        new_user = None
         try:
-            # meal_admin 설정
-            result = await db.execute(select(User).where(User.id == Config.SERVICE_ID))
-            user = result.scalar_one_or_none()
+            service_kc_user_id = Config.SERVICE_ACCOUNT_SUB  # Keycloak UUID (필수)
 
-            if user:
-                await db.execute(
-                    update(User)
-                    .where(User.id == Config.SERVICE_ID)
-                    .values(meal_admin=True)
+            if not service_kc_user_id:
+                raise RuntimeError("Config.SERVICE_ACCOUNT_SUB가 설정되지 않았습니다.")
+
+            # 1) Keycloak 존재 확인 (없으면 DB에 넣으면 안 됨)
+            exists_in_kc = await keycloak_user_exists_by_id(service_kc_user_id)
+            if not exists_in_kc:
+                raise RuntimeError(
+                    f"Keycloak에 service_account가 없습니다. user_id={service_kc_user_id}"
                 )
-            else:
-                await db.execute(
-                    insert(User).values(id=Config.SERVICE_ID, meal_admin=True)
-                )
+
+            # 2) DB에 이미 있으면 해당 User.id 설정 후 종료
+            result = await db.execute(select(User).where(User.user_id == service_kc_user_id))
+            row = result.scalar_one_or_none()
+            if row:
+                logger.info("service_account 이미 존재: User(id=%s, user_id=%s)", row.id, row.user_id)
+                set_service_user_id(row.id)
+                return
+
+            # 3) 없으면 insert (권한/role 정보는 저장하지 않음)
+            new_user = User(user_id=service_kc_user_id)
+            db.add(new_user)
             await db.commit()
-            logger.info("User(id=%s)의 meal_admin=True로 설정 완료", Config.SERVICE_ID)
-            logger.info(
-                "User(id=1)의 global_admin=True로 설정 완료 (존재하지 않으면 생성됨)"
-            )
-        except Exception:
+            await db.refresh(new_user)
+            set_service_user_id(new_user.id)
+            logger.info("service_account DB 생성 완료: User(id=%s, user_id=%s)", new_user.id, new_user.user_id)
+        except Exception as e:
             await db.rollback()
-            logger.exception("SERVICE_ID 또는 global_admin 설정 중 예외 발생")
+            logger.error("service_account DB 생성 중 오류 발생", exc_info=e)
+            raise
 
 
 async def sync_restaurants():
-    """restaurant.json 기준으로 Restaurant 테이블 전체 동기화 (추가 + 갱신)"""
+    """restaurant.json 기준으로 Restaurant 테이블 전체 동기화 (추가 + 갱신)
+    - entry["owner"]는 Keycloak UUID(str)
+    - Restaurant.owner는 User.id(int) FK
+    => owner를 User.user_id로 조회해서 User.id로 치환 후 저장
+    """
     async with AsyncSessionLocal() as db:
         try:
             restaurant_path = Path(Config.RESTAURANT_DATA)
             data = json.loads(restaurant_path.read_text(encoding="utf-8"))
 
+            # Keycloak UUID -> DB user.id 캐시
+            owner_cache: dict[str, int] = {}
+
+            async def get_owner_db_id(kc_uuid: str) -> int:
+                if kc_uuid in owner_cache:
+                    return owner_cache[kc_uuid]
+
+                result = await db.execute(select(User.id).where(User.user_id == kc_uuid))
+                db_id = result.scalar_one_or_none()
+                if db_id is None:
+                    raise RuntimeError(f"User.user_id={kc_uuid} 가 DB에 없습니다. (owner 매핑 실패)")
+
+                owner_cache[kc_uuid] = db_id
+                return db_id
+
             for entry in data:
+                entry = dict(entry)
+
+                # JSON의 "owner" 필드를 User.id로 변환
+                kc_owner = entry.get("owner")
+                if kc_owner:
+                    entry["owner"] = await get_owner_db_id(kc_owner)
+
                 stmt = (
                     update(Restaurant)
                     .where(Restaurant.id == entry["id"])
@@ -107,12 +148,13 @@ async def sync_restaurants():
             await db.commit()
             logger.info("Restaurant 테이블 동기화 완료 (추가/갱신 포함)")
 
-            # ✅ 시퀀스 재설정 (PostgreSQL 전용)
+            # TODO: 시퀀스 재설정 (PostgreSQL 전용)으로 하지 않도록, 다른 DB도 지원하도록 개선 필요
+            # external_id(UUID)를 만드는 것도 좋을 듯
             await db.execute(
                 text("""
                     SELECT setval(
                         pg_get_serial_sequence('"Restaurant"', 'id'),
-                        (SELECT MAX(id) FROM "Restaurant")
+                        COALESCE((SELECT MAX(id) FROM "Restaurant"), 1)
                     )
                 """)
             )
@@ -122,44 +164,3 @@ async def sync_restaurants():
         except Exception:
             await db.rollback()
             logger.exception("Restaurant 동기화 중 예외 발생")
-
-
-async def sync_test_users():
-    """DEBUG 모드일 때, 최소 2명의 test_user를 유지하도록 동기화
-
-    DEBUG 모드가 활성화된 경우, 데이터베이스에 최소 2명의 test_user가 존재하도록 동기화합니다.
-    부족한 사용자 수만큼 새로운 test_user를 추가합니다.
-
-    Raises:
-        IntegrityError: 중복된 test_user가 감지된 경우 발생합니다.
-    """
-    if not Config.debug:
-        return  # debug 모드가 아니면 실행하지 않음
-
-    async with AsyncSessionLocal() as db:
-        try:
-            # 현재 사용자 수 확인
-            user_count_result = await db.execute(select(func.count(User.id)))
-            user_count = (
-                user_count_result.scalar_one()
-            )  # scalar() 대신 scalar_one() 사용
-
-            if user_count < Config.MIN_TEST_USERS:
-                new_users = [User() for i in range(3 - user_count)]
-                if user_count == 0:
-                    new_users[0].meal_admin = True
-
-                db.add_all(new_users)
-                await db.commit()
-                logger.info(
-                    "DEBUG 모드 활성화: 임의 사용자 %s명 추가됨", len(new_users)
-                )
-            else:
-                logger.debug("DEBUG 모드 활성화: 사용자 수 충분함")
-
-        except IntegrityError:
-            message = traceback.format_exc()
-            logger.debug("Error details: %s", message)
-            logger.warning("중복된 test_user가 감지되었습니다.")
-            await db.rollback()
-            logger.debug("DB 롤백 완료")

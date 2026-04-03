@@ -10,10 +10,10 @@ from app.jobs.scheduler import start_scheduler, stop_scheduler
 from app.routers import meals_router, restaurants_router, users_router
 from app.utils.lifespan import (
     sync_meal_types,
-    sync_test_users,
-    set_service_user_as_admin,
     sync_restaurants,
+    ensure_service_account_in_db,
 )
+from app.database import init_db
 
 
 @asynccontextmanager
@@ -31,26 +31,23 @@ async def lifespan(app: FastAPI):
     )
 
     # 1. DB 초기화
-    # await init_db()
+    await init_db()
 
     # 2. meal_type 동기화
     await sync_meal_types()
 
-    # 3. SERVICE_ID 유저 관리자 권한 설정
-    await set_service_user_as_admin()
+    # 3. Service Account를 DB에 등록 (Restaurant owner로 사용)
+    await ensure_service_account_in_db()
 
     # 4. Restaurant 동기화
     await sync_restaurants()
 
-    # 5. DEBUG 모드일 때 test_user 동기화
-    await sync_test_users()
-
-    # 6. 스케줄러 시작
+    # 5. 스케줄러 시작
     start_scheduler()
 
     yield  # FastAPI 실행 유지
 
-    # 7. 종료 작업
+    # 6. 종료 작업
     stop_scheduler()
     logger.info("🛑 서비스 종료: 정리 작업 완료")
 
