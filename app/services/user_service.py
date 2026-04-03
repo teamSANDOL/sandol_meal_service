@@ -3,8 +3,6 @@
 from fastapi import HTTPException
 from keycloak import KeycloakGetError, KeycloakOpenID, KeycloakAdmin
 from keycloak.exceptions import KeycloakError
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Config, logger
 from app.schemas.users import AdminUserSchema, UserSchema
@@ -24,7 +22,7 @@ def get_keycloak_client() -> KeycloakOpenID:
 def get_local_keycloak_admin_client() -> KeycloakAdmin:
     """로컬 KeycloakAdmin 인스턴스를 생성합니다."""
     return KeycloakAdmin(
-        server_url="http://keycloak:8080/auth/",
+        server_url=Config.KC_LOCAL_URL,
         realm_name=Config.KC_REALM,
         client_id=Config.KC_CLIENT_ID,
         client_secret_key=Config.KC_CLIENT_SECRET,
@@ -36,7 +34,7 @@ def get_local_keycloak_admin_client() -> KeycloakAdmin:
 def get_keycloak_admin_client() -> KeycloakAdmin:
     """KeycloakAdmin 인스턴스를 생성합니다."""
     return KeycloakAdmin(
-        server_url = Config.KC_SERVER_URL,
+        server_url=Config.KC_SERVER_URL,
         realm_name=Config.KC_REALM,
         client_id=Config.KC_CLIENT_ID,
         client_secret_key=Config.KC_CLIENT_SECRET,
@@ -55,20 +53,22 @@ async def keycloak_user_exists_by_id(user_id: str) -> bool:
     """
     admin = get_local_keycloak_admin_client()
     try:
-        admin.get_user(user_id=user_id)  # sub가 Keycloak user UUID라는 전제
+        await admin.a_get_user(user_id=user_id)  # sub가 Keycloak user UUID라는 전제
         return True
     except KeycloakGetError as e:
-        logger.info("KeycloakGetError 발생: %s", e)
-        logger.info("KeycloakGetError 발생: %s", e.error_message)
         if getattr(e, "response_code", None) == Config.HttpStatus.NOT_FOUND:
             return False
+        logger.error("Keycloak 사용자 조회 중 오류 발생", exc_info=e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="사용자 조회 중 오류가 발생했습니다.",
+        ) from e
     except KeycloakError as e:
         logger.error("Keycloak 사용자 조회 중 오류 발생", exc_info=e)
         raise HTTPException(
             status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
             detail="사용자 조회 중 오류가 발생했습니다.",
         ) from e
-    return False
 
 
 async def check_admin_user(user: User) -> AdminUserSchema:
@@ -102,7 +102,8 @@ async def check_admin_user(user: User) -> AdminUserSchema:
         )
 
     except Exception as e:
+        logger.exception("관리자 권한 확인 중 오류 발생: user_id=%s", user.user_id)
         raise HTTPException(
             status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
-            detail=f"Keycloak admin check failed: {e}",
+            detail="관리자 권한 조회에 실패했습니다.",
         ) from e
