@@ -22,6 +22,8 @@
 ## 📌 환경 설정  
 - **모든 서비스는 Docker 기반으로 실행되므로, 로컬 환경에 별도로 의존하지 않음**  
 - **환경 변수 파일 (`.env`) 필요 시, 샘플 파일 (`.env.example`) 제공**
+- **Keycloak 외부 도메인은 루트 `.env`의 `SERVICE_DOMAIN`으로 관리하며, compose가 이를 `KC_HOSTNAME`으로 주입함**
+  - 변수명을 `KC_HOSTNAME`으로 두지 않은 이유는 같은 도메인 값을 다른 서비스에서도 재사용할 수 있게 하기 위함
 - **Docker Compose를 통해 서비스 간 네트워크 및 볼륨을 설정**
 - 기본 데이터베이스는 **PostgreSQL**을 사용합니다.
 
