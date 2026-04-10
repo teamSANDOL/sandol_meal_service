@@ -5,6 +5,11 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      MEAL_TYPES_FILE_NAME: ${MEAL_TYPES_FILE_NAME:-meal_types.json}
+    volumes:
+      - ./app/config/student_cafeteria.json:/app/app/config/student_cafeteria.json:ro
+      - ./app/config/meal_types.json:/app/app/config/meal_types.json:ro
     ports:
       - "<호스트포트>:<컨테이너포트>"
     networks:
