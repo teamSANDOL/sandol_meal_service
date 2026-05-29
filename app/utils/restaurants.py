@@ -3,7 +3,7 @@
 이 모듈은 식당과 관련된 다양한 유틸리티 함수들을 포함하고 있습니다.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal, cast
 from datetime import datetime
 
 from httpx import AsyncClient
@@ -15,6 +15,8 @@ from sqlalchemy.future import select
 from app.models.user import User
 from app.models.restaurants import OperatingHours, Restaurant, RestaurantSubmission
 from app.schemas.restaurants import (
+    BUFFET_ESTABLISHMENT_TYPES,
+    EstablishmentType,
     Location,
     RestaurantResponse,
     TimeRange,
@@ -64,6 +66,15 @@ async def fetch_restaurant_submission(
     submission: RestaurantSubmission,
     db: AsyncSession,
 ) -> RestaurantSubmissionSchema:
+    """식당 등록 요청 ORM 객체를 응답 스키마로 변환합니다.
+
+    Args:
+        submission (RestaurantSubmission): 변환할 식당 등록 요청 ORM 객체.
+        db (AsyncSession): 운영 시간 조회에 사용할 데이터베이스 세션.
+
+    Returns:
+        RestaurantSubmissionSchema: 운영 시간까지 포함된 식당 등록 요청 응답 스키마.
+    """
     operating_hours_dict = await fetch_operating_hours_dict(
         db, submission_id=submission.id
     )
@@ -74,12 +85,13 @@ async def fetch_restaurant_submission(
     )
 
     return RestaurantSubmissionSchema(
-        status=submission.status,  # type: ignore
+        status=cast(Literal["pending", "approved", "rejected"], submission.status),
         submitter=submission.submitter,
         submitted_time=submission.submitted_time,
         id=submission.id,
         name=submission.name,
-        establishment_type=submission.establishment_type,  # type: ignore
+        establishment_type=cast(EstablishmentType, submission.establishment_type),
+        price=submission.price,
         location=build_location_schema(
             submission.is_campus,
             building=submission.building_name,
@@ -100,7 +112,9 @@ async def fetch_restaurant_submission(
     )
 
 
-def build_map_links(naver_link: str | None, kakao_link: str | None) -> dict | None:
+def build_map_links(
+    naver_link: str | None, kakao_link: str | None
+) -> dict[str, str] | None:
     """네이버와 카카오 지도 링크를 딕셔너리로 생성.
 
     Args:
@@ -165,7 +179,8 @@ def build_restaurant_schema(
         id=restaurant.id,
         name=restaurant.name,
         owner=restaurant.owner,
-        establishment_type=restaurant.establishment_type,  # type: ignore
+        establishment_type=cast(EstablishmentType, restaurant.establishment_type),
+        price=restaurant.price,
         location=Location(
             is_campus=restaurant.is_campus,
             building=restaurant.building_name,
@@ -182,6 +197,19 @@ def build_restaurant_schema(
         lunch_time=operating_hours.get("lunch_time"),
         dinner_time=operating_hours.get("dinner_time"),
     )
+
+
+def validate_establishment_type_price(
+    establishment_type: str,
+    price: int | None,
+) -> None:
+    """식당 유형과 가격 조합을 검증합니다."""
+    if establishment_type in BUFFET_ESTABLISHMENT_TYPES and price is None:
+        raise ValueError(
+            "fixed_korean_buffet 및 variable_korean_buffet 식당은 price 필드가 필수입니다."
+        )
+    if price is not None and price <= 0:
+        raise ValueError("price는 0보다 큰 정수여야 합니다.")
 
 
 async def get_submission_or_404(

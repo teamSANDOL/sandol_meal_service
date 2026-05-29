@@ -13,6 +13,7 @@ from app.models.restaurants import Restaurant, set_service_user_id
 from app.models.user import User
 from app.config import Config, logger
 from app.services.user_service import keycloak_user_exists_by_id
+from app.utils.restaurants import validate_establishment_type_price
 
 
 async def sync_meal_types():
@@ -59,8 +60,8 @@ async def sync_meal_types():
 
 
 async def ensure_service_account_in_db() -> None:
-    """
-    서버 실행 전:
+    """서버 실행 전에 service_account를 DB와 동기화합니다.
+
     - Keycloak에 존재하는 service_account를 DB(User 테이블)에 1회만 등록한다.
     - 이미 있으면 아무 것도 하지 않는다.
     - Keycloak에 없으면 DB에 추가하지 않는다(오류로 처리).
@@ -104,6 +105,7 @@ async def ensure_service_account_in_db() -> None:
 
 async def sync_restaurants():
     """restaurant.json 기준으로 Restaurant 테이블 전체 동기화 (추가 + 갱신)
+
     - entry["owner"]는 Keycloak UUID(str)
     - Restaurant.owner는 User.id(int) FK
     => owner를 User.user_id로 조회해서 User.id로 치환 후 저장
@@ -128,8 +130,12 @@ async def sync_restaurants():
                 owner_cache[kc_uuid] = db_id
                 return db_id
 
-            for entry in data:
-                entry = dict(entry)
+            for raw_entry in data:
+                entry = dict(raw_entry)
+                validate_establishment_type_price(
+                    entry["establishment_type"],
+                    entry.get("price"),
+                )
 
                 # JSON의 "owner" 필드를 User.id로 변환
                 kc_owner = entry.get("owner")
@@ -142,7 +148,7 @@ async def sync_restaurants():
                     .values(**entry)
                 )
                 result = await db.execute(stmt)
-                if result.rowcount == 0:
+                if getattr(result, "rowcount", 0) == 0:
                     db.add(Restaurant(**entry))
 
             await db.commit()
