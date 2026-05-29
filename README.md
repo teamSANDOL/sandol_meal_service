@@ -18,6 +18,53 @@
 ## 📌 문서  
 - **제작된 API 문서 (Swagger, Notion 활용 등) 바로가기 링크 명시**  
 
+### 식당 유형 구분 기준
+
+`sandol_meal_service`의 식당 유형(`establishment_type`)은 아래 4가지 값을 사용합니다.
+
+| 값 | 한글 설명 | 구분 기준 |
+| --- | --- | --- |
+| `student` | 교내 학생식당 | 학교가 운영하거나 학생식당으로 취급하는 교내 식당입니다. 현재 seed 데이터(TIP 가가식당, E동 레스토랑)도 이 유형을 사용합니다. |
+| `fixed_menu_restaurant` | 고정메뉴일반식당 | 한식 뷔페가 아니며, 일반 식당 형태로 운영되는 식당입니다. 과거 `vendor` 값은 모두 이 유형으로 이관됩니다. |
+| `fixed_korean_buffet` | 고정메뉴형 한식뷔페 | 한식 뷔페 형태이며, 1인분 가격이 고정적으로 관리되는 식당입니다. 과거 `external` 값은 모두 이 유형으로 이관됩니다. |
+| `variable_korean_buffet` | 메뉴 변경형 한식뷔페 | 한식 뷔페 형태이며, 메뉴가 바뀌는 유형의 식당입니다. |
+
+#### 판정 원칙
+
+1. **학생식당 여부가 최우선이면 `student`**
+   - 학교 내부 학생식당으로 취급하면 `student`를 사용합니다.
+   - 현재 코드상 seed 데이터는 모두 `student`입니다.
+
+2. **한식 뷔페인지 여부가 다음 기준입니다**
+   - 한식 뷔페가 아니면 `fixed_menu_restaurant`입니다.
+   - 한식 뷔페이면 `fixed_korean_buffet` 또는 `variable_korean_buffet` 중 하나를 사용합니다.
+
+3. **뷔페가 아닌 일반 식당은 `fixed_menu_restaurant`**
+   - 과거 `vendor`는 이제 더 이상 쓰지 않으며, 모두 `fixed_menu_restaurant`로 관리합니다.
+
+4. **한식 뷔페 2종은 모두 `price`가 필요합니다**
+   - `fixed_korean_buffet`
+   - `variable_korean_buffet`
+   - 두 유형은 등록 요청 시 `price`(1인분 가격, 원 단위)가 필수입니다.
+
+5. **`is_campus`는 식당 유형과 별개의 필드입니다**
+   - 현재 코드상 `is_campus`는 독립적인 위치 정보 필드입니다.
+   - 즉, meal-service는 현재 `student`는 반드시 교내여야 한다거나, `fixed_menu_restaurant`는 반드시 교외여야 한다는 식의 강제 규칙을 두고 있지 않습니다.
+
+#### 현재 운영/마이그레이션 기준
+
+- `external -> fixed_korean_buffet`
+- `vendor -> fixed_menu_restaurant`
+
+따라서 현재 canonical establishment type 값은 아래 4개입니다.
+
+```text
+student
+fixed_menu_restaurant
+fixed_korean_buffet
+variable_korean_buffet
+```
+
 ---
 ## 📌 환경 설정  
 - **모든 서비스는 Docker 기반으로 실행되므로, 로컬 환경에 별도로 의존하지 않음**  

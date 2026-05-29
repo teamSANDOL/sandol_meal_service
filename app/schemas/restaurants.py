@@ -4,11 +4,32 @@ Pydantic BaseModel을 사용하여 데이터 유효성 검사를 수행합니다
 """
 
 from datetime import datetime
-from typing import Dict, Literal, Optional
+from typing import Dict, Literal, Optional, Self, TypeAlias
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from app.utils.times import get_datetime_by_string
+
+
+EstablishmentType: TypeAlias = Literal[
+    "student",
+    "fixed_menu_restaurant",
+    "fixed_korean_buffet",
+    "variable_korean_buffet",
+]
+
+ESTABLISHMENT_TYPE_DESCRIPTION = (
+    "식당 유형("
+    "student=교내 학생식당|"
+    "fixed_menu_restaurant=고정메뉴일반식당|"
+    "fixed_korean_buffet=고정메뉴형 한식뷔페|"
+    "variable_korean_buffet=메뉴 변경형 한식뷔페)"
+)
+
+BUFFET_ESTABLISHMENT_TYPES = {
+    "fixed_korean_buffet",
+    "variable_korean_buffet",
+}
 
 
 class TimeRange(BaseModel):
@@ -60,7 +81,8 @@ class RestaurantSchema(BaseModel):
 
     Attributes:
         name (str): 레스토랑 이름
-        establishment_type (Literal["student", "vendor", "external"]): 레스토랑 유형
+        establishment_type (EstablishmentType): 레스토랑 유형
+        price (Optional[int]): 1인분 가격(원)
         location (Optional[Location]): 위치 정보
         opening_time (Optional[TimeRange]): 영업 시간
         break_time (Optional[TimeRange]): 휴식 시간
@@ -71,7 +93,8 @@ class RestaurantSchema(BaseModel):
     """
 
     name: str
-    establishment_type: Literal["student", "vendor", "external"]
+    establishment_type: EstablishmentType
+    price: Optional[int] = Field(default=None, gt=0)
     location: Optional[Location] = None
     opening_time: Optional[TimeRange] = None
     break_time: Optional[TimeRange] = None
@@ -79,7 +102,6 @@ class RestaurantSchema(BaseModel):
     brunch_time: Optional[TimeRange] = None
     lunch_time: Optional[TimeRange] = None
     dinner_time: Optional[TimeRange] = None
-
 
 class RestaurantResponse(RestaurantSchema):
     """GET /restaurants/{id} 및 /restaurants 엔드포인트 응답 바디를 나타내는 클래스입니다.
@@ -95,6 +117,18 @@ class RestaurantResponse(RestaurantSchema):
 
 class RestaurantRequest(RestaurantSchema):
     """POST /restaurants/requests 엔드포인트 요청 바디를 나타내는 클래스입니다."""
+
+    @model_validator(mode="after")
+    def validate_price_for_establishment_type(self) -> Self:
+        """한식 뷔페 유형에는 1인분 가격을 필수로 강제합니다."""
+        if (
+            self.establishment_type in BUFFET_ESTABLISHMENT_TYPES
+            and self.price is None
+        ):
+            raise ValueError(
+                "fixed_korean_buffet 및 variable_korean_buffet 식당은 price 필드가 필수입니다."
+            )
+        return self
 
 
 class RestaurantSubmission(RestaurantSchema):

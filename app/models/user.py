@@ -1,17 +1,22 @@
 """이 모듈은 사용자 정보를 저장하는 User 클래스를 정의합니다."""
 
 from datetime import datetime, timezone
-from typing import List, TYPE_CHECKING
+from typing import List, Protocol
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import DateTime, Integer, Boolean, event, String, func
+from sqlalchemy import DateTime, Integer, event, String, func
 from sqlalchemy.orm.session import object_session
 
 from app.database import Base
 from app.models.associations import restaurant_manager_association
 
-if TYPE_CHECKING:
-    from app.models.restaurants import Restaurant, RestaurantSubmission
+
+class Restaurant(Protocol):
+    """User 모델 타입 힌트용 Restaurant 프로토콜입니다."""
+
+
+class RestaurantSubmission(Protocol):
+    """User 모델 타입 힌트용 RestaurantSubmission 프로토콜입니다."""
 
 
 class User(Base):
