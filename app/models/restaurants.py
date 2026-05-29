@@ -4,7 +4,7 @@
 """
 
 from __future__ import annotations
-from typing import List, Optional, TYPE_CHECKING
+from typing import Any, List, Optional, Protocol
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -23,23 +23,23 @@ from sqlalchemy.inspection import inspect
 from app.database import Base
 from app.models.associations import restaurant_manager_association
 
-if TYPE_CHECKING:
-    from app.models.user import User
-    from app.models.meals import Meal
+class User(Protocol):
+    """Restaurant 모델 타입 힌트용 User 프로토콜입니다."""
+
 
 # Service Account의 User.id를 저장할 변수 (lifespan에서 설정)
-_service_user_id: int | None = None
+_service_state: dict[str, int | None] = {"user_id": None}
 
 def set_service_user_id(user_id: int):
     """Service Account의 User.id를 설정합니다."""
-    global _service_user_id
-    _service_user_id = user_id
+    _service_state["user_id"] = user_id
 
 def get_service_user_id() -> int:
     """Service Account의 User.id를 반환합니다."""
-    if _service_user_id is None:
+    service_user_id = _service_state["user_id"]
+    if service_user_id is None:
         raise RuntimeError("Service User ID가 설정되지 않았습니다.")
-    return _service_user_id
+    return service_user_id
 
 
 class Restaurant(Base):
@@ -51,6 +51,7 @@ class Restaurant(Base):
         owner (int): 식당 소유자의 사용자 ID
         is_campus (bool): 캠퍼스 내 식당 여부
         establishment_type (str): 식당 유형
+        price (Optional[int]): 1인분 가격(원)
         building_name (Optional[str]): 건물 이름
         naver_map_link (Optional[str]): 네이버 지도 링크
         kakao_map_link (Optional[str]): 카카오 지도 링크
@@ -69,6 +70,7 @@ class Restaurant(Base):
     owner: Mapped[int] = mapped_column(Integer, ForeignKey("User.id"), nullable=False)
     is_campus: Mapped[bool] = mapped_column(Boolean, nullable=False)
     establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     building_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     naver_map_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -81,7 +83,7 @@ class Restaurant(Base):
     )
 
     # ✅ managers 관계 추가 (다대다 관계 설정)
-    managers: Mapped[List["User"]] = relationship(
+    managers: Mapped[list["User"]] = relationship(
         "User",
         secondary=restaurant_manager_association,
         back_populates="managed_restaurants",
@@ -96,7 +98,7 @@ class Restaurant(Base):
         cascade="all, delete-orphan",
     )
 
-    meals: Mapped[List["Meal"]] = relationship("Meal", back_populates="restaurant")
+    meals: Mapped[list[Any]] = relationship("Meal", back_populates="restaurant")
 
     __table_args__ = (
         Index("restaurant_name_index", "name"),
@@ -136,6 +138,7 @@ class RestaurantSubmission(Base):
         reviewed_time (Optional[datetime]): 검토 시간
         rejection_message (Optional[str]): 거절 메시지
         establishment_type (str): 식당 유형
+        price (Optional[int]): 1인분 가격(원)
         is_campus (bool): 캠퍼스 내 식당 여부
         building_name (Optional[str]): 건물 이름
         naver_map_link (Optional[str]): 네이버 지도 링크
@@ -169,6 +172,7 @@ class RestaurantSubmission(Base):
     )
     rejection_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     establishment_type: Mapped[str] = mapped_column(Text, nullable=False)
+    price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     is_campus: Mapped[bool] = mapped_column(Boolean, nullable=False)
     building_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
