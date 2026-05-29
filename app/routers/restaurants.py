@@ -24,7 +24,7 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
@@ -44,6 +44,8 @@ from app.schemas.base import BaseSchema
 from app.schemas.pagination import CustomPage
 from app.schemas.restaurants import (
     ApproverResponse,
+    EstablishmentType,
+    ESTABLISHMENT_TYPE_DESCRIPTION,
     RestaurantRequest,
     RestaurantResponse,
     SubmissionResponse,
@@ -157,6 +159,7 @@ async def restaurant_submit_request(
         status="pending",
         submitter=current_user.id,
         establishment_type=request.establishment_type,
+        price=request.price,
         is_campus=request.location.is_campus,
         building_name=request.location.building,
         naver_map_link=request.location.map_links.get("naver")
@@ -242,6 +245,7 @@ async def restaurant_submit_approval(
         name=submission.name,
         owner=submission.submitter,
         establishment_type=submission.establishment_type,
+        price=submission.price,
         is_campus=submission.is_campus,
         building_name=submission.building_name,
         naver_map_link=submission.naver_map_link,
@@ -451,7 +455,8 @@ async def get_restaurant(
         id=restaurant.id,
         name=restaurant.name,
         owner=restaurant.owner,
-        establishment_type=restaurant.establishment_type,  # type: ignore
+        establishment_type=cast(EstablishmentType, restaurant.establishment_type),
+        price=restaurant.price,
         location=build_location_schema(
             is_campus=restaurant.is_campus,
             building=restaurant.building_name,
@@ -533,15 +538,16 @@ async def delete_restaurant(
 
 
 @router.get("/", response_model=CustomPage[RestaurantResponse])
-async def get_restaurants(
+async def get_restaurants(  # noqa: PLR0913
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
     owner_user_id: str = Query(None, description="식당 소유자 user_id"),
     manager_user_id: str = Query(None, description="식당 관리자 user_id"),
     name: str = Query(None, description="식당 이름 (부분 일치)"),
-    establishment_type: Literal["student", "vendor", "external"] = Query(
-        None, description="식당 유형(student|vendor|external)"
-    ),
+    establishment_type: Annotated[
+        EstablishmentType | None,
+        Query(description=ESTABLISHMENT_TYPE_DESCRIPTION),
+    ] = None,
     is_campus: bool = Query(None, description="캠퍼스 내 식당 여부(true|false)"),
 ):
     """모든 식당 데이터를 페이징하여 조회합니다.
@@ -549,10 +555,10 @@ async def get_restaurants(
     Args:
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
-        owner_id (str, optional): 소유자 ID로 필터링
-        manager_id (str, optional): 관리자 ID로 필터링
+        owner_user_id (str, optional): 소유자 user_id로 필터링
+        manager_user_id (str, optional): 관리자 user_id로 필터링
         name (str, optional): 식당 이름(부분 일치)으로 필터링
-        establishment_type (str, optional): 식당 유형(student|vendor|external)
+        establishment_type (str, optional): 식당 유형(student|fixed_menu_restaurant|fixed_korean_buffet|variable_korean_buffet)
         is_campus (bool, optional): 캠퍼스 내 식당 여부
 
     Returns:
@@ -615,7 +621,8 @@ async def get_restaurants(
             id=restaurant.id,
             name=restaurant.name,
             owner=restaurant.owner,
-            establishment_type=restaurant.establishment_type,
+            establishment_type=cast(EstablishmentType, restaurant.establishment_type),
+            price=restaurant.price,
             location=build_location_schema(
                 is_campus=restaurant.is_campus,
                 building=restaurant.building_name,
