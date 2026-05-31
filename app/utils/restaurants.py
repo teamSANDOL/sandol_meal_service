@@ -18,6 +18,7 @@ from app.schemas.restaurants import (
     BUFFET_ESTABLISHMENT_TYPES,
     EstablishmentType,
     Location,
+    RestaurantSchema,
     RestaurantResponse,
     TimeRange,
 )
@@ -165,6 +166,8 @@ def build_location_schema(  # noqa: PLR0913
 def build_restaurant_schema(
     restaurant: Restaurant,
     operating_hours: dict[str, TimeRange],
+    *,
+    owner_user_id: str | None = None,
 ) -> RestaurantResponse:
     """RestaurantResponse 스키마 생성.
 
@@ -179,6 +182,7 @@ def build_restaurant_schema(
         id=restaurant.id,
         name=restaurant.name,
         owner=restaurant.owner,
+        owner_user_id=owner_user_id,
         establishment_type=cast(EstablishmentType, restaurant.establishment_type),
         price=restaurant.price,
         location=Location(
@@ -197,6 +201,64 @@ def build_restaurant_schema(
         lunch_time=operating_hours.get("lunch_time"),
         dinner_time=operating_hours.get("dinner_time"),
     )
+
+
+async def fetch_owner_user_id(db: AsyncSession, owner_id: int) -> str | None:
+    """로컬 owner ID에 대응하는 Keycloak user_id를 조회합니다."""
+    result = await db.execute(select(User.user_id).where(User.id == owner_id))
+    return result.scalar_one_or_none()
+
+
+def build_restaurant_model(
+    restaurant_data: RestaurantSchema,
+    *,
+    owner_id: int,
+) -> Restaurant:
+    """RestaurantSchema를 ORM Restaurant 모델로 변환합니다."""
+    if restaurant_data.location is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="location 필드는 필수입니다.",
+        )
+
+    validate_establishment_type_price(
+        restaurant_data.establishment_type,
+        restaurant_data.price,
+    )
+
+    return Restaurant(
+        name=restaurant_data.name,
+        owner=owner_id,
+        establishment_type=restaurant_data.establishment_type,
+        price=restaurant_data.price,
+        is_campus=restaurant_data.location.is_campus,
+        building_name=restaurant_data.location.building,
+        naver_map_link=(restaurant_data.location.map_links or {}).get("naver"),
+        kakao_map_link=(restaurant_data.location.map_links or {}).get("kakao"),
+        latitude=restaurant_data.location.latitude,
+        longitude=restaurant_data.location.longitude,
+    )
+
+
+async def replace_restaurant_operating_hours(
+    db: AsyncSession,
+    *,
+    restaurant_id: int,
+    operation_hours_dict: dict[str, TimeRange | None],
+) -> None:
+    """식당 운영 시간을 전체 교체합니다."""
+    result = await db.execute(
+        select(OperatingHours).filter(OperatingHours.restaurant_id == restaurant_id)
+    )
+    existing_operating_hours = result.scalars().all()
+    for operating_hour in existing_operating_hours:
+        await db.delete(operating_hour)
+
+    operating_hours_entries = build_operating_hours_entries(
+        operation_hours_dict,
+        restaurant_id=restaurant_id,
+    )
+    db.add_all(operating_hours_entries)
 
 
 def validate_establishment_type_price(
@@ -317,7 +379,10 @@ async def get_restaurant_or_404(
     """
     logger.info("Get request received for restaurant_id: %s", restaurant_id)
 
-    result = await db.execute(select(Restaurant).filter(Restaurant.id == restaurant_id))
+    result = await db.execute(
+        select(Restaurant)
+        .filter(Restaurant.id == restaurant_id)
+    )
     restaurant = result.scalars().first()
     if not restaurant:
         raise HTTPException(
@@ -374,7 +439,7 @@ async def get_restaurant_with_permission(
     # ✅ 2️⃣ 권한 확인 (owner/manager → admin 순서, 필요할 때만 admin 체크)
     is_owner_or_manager = (
         restaurant.owner == current_user.id
-        or any(m.id == current_user.id for m in restaurant.managers)
+        or any(getattr(manager, "id", None) == current_user.id for manager in restaurant.managers)
     )
     if not is_owner_or_manager:
         is_owner_or_manager = (await check_admin_user(current_user)).is_admin

@@ -49,6 +49,7 @@ from app.schemas.meals import (
     MealRegister,
     MealRegisterResponse,
     MealResponse,
+    MealUpdate,
     MenuEdit,
 )
 from app.schemas.meals import MealType as MealTypeSchema
@@ -63,6 +64,7 @@ from app.utils.meals import (
     delete_meal_transaction,
     get_meal_type,
     register_meal_transaction,
+    update_meal_transaction,
     update_meal_menu,
     update_meal_menu_transaction,
 )
@@ -526,6 +528,69 @@ async def register_meal(
     )
 
     return BaseSchema[MealRegisterResponse](data=response_data)
+
+
+@router.patch("/{meal_id}", response_model=BaseSchema[MealResponse])
+async def update_meal(
+    meal_id: int,
+    meal_update: MealUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    client: Annotated[AsyncClient, Depends(get_async_client)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """특정 식사 데이터를 전체 수정합니다."""
+    logger.info("User %d attempting to update meal %d", current_user.id, meal_id)
+
+    result = await db.execute(
+        select(Meal)
+        .where(Meal.id == meal_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+    meal = result.scalars().first()
+
+    if not meal:
+        logger.warning("Meal with id %d not found", meal_id)
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="Meal not found",
+        )
+
+    await get_restaurant_with_permission(meal.restaurant_id, db, current_user)
+    await get_restaurant_with_permission(meal_update.restaurant_id, db, current_user)
+    meal_type = await get_meal_type(db, meal_update.meal_type)
+
+    await update_meal_transaction(
+        db,
+        meal,
+        restaurant_id=meal_update.restaurant_id,
+        meal_type_id=meal_type.id,
+        menu=meal_update.menu,
+    )
+
+    result = await db.execute(
+        select(Meal)
+        .where(Meal.id == meal_id)
+        .options(selectinload(Meal.restaurant))
+        .options(selectinload(Meal.meal_type))
+    )
+    updated_meal = result.scalars().first()
+    if updated_meal is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="Meal not found",
+        )
+
+    response_data = MealResponse(
+        id=updated_meal.id,
+        menu=updated_meal.menu,
+        meal_type=MealTypeSchema(updated_meal.meal_type.name),
+        restaurant_id=updated_meal.restaurant_id,
+        restaurant_name=updated_meal.restaurant.name,
+        registered_at=updated_meal.registered_at,
+        updated_at=updated_meal.updated_at,
+    )
+    return BaseSchema[MealResponse](data=response_data)
 
 
 @router.delete("/{meal_id}/menus", status_code=Config.HttpStatus.NO_CONTENT)

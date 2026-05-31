@@ -4,6 +4,7 @@
 """
 
 from datetime import datetime, timezone
+from typing import Any
 from fastapi import HTTPException
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,11 @@ from app.config import Config, logger
 from app.models.meals import Meal, MealType
 
 
-async def apply_date_filter(query: Select, start_date: str | None, end_date: str | None) -> Select:
+async def apply_date_filter(
+    query: Select[Any],
+    start_date: str | None,
+    end_date: str | None,
+) -> Select[Any]:
     """날짜 필터링을 적용하는 헬퍼 함수
 
     Args:
@@ -150,6 +155,39 @@ async def update_meal_menu_transaction(db: AsyncSession, meal: Meal, updated_men
         await db.rollback()
         logger.error("Meal 메뉴 수정 중 에러 발생: %s", e)
         raise HTTPException(status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR, detail="식사 메뉴 수정 중 오류가 발생했습니다.") from e
+
+
+async def update_meal_transaction(
+    db: AsyncSession,
+    meal: Meal,
+    *,
+    restaurant_id: int,
+    meal_type_id: int,
+    menu: list[str],
+):
+    """식사 전체 정보를 수정하는 트랜잭션 처리"""
+    logger.info(
+        "Updating meal %s to restaurant_id=%s meal_type_id=%s",
+        meal.id,
+        restaurant_id,
+        meal_type_id,
+    )
+
+    try:
+        meal.restaurant_id = restaurant_id
+        meal.meal_type_id = meal_type_id
+        meal.menu = menu
+        db.add(meal)
+        await db.commit()
+        await db.refresh(meal)
+        logger.info("Meal successfully updated: %s", meal.id)
+    except Exception as e:
+        await db.rollback()
+        logger.error("Meal 전체 수정 중 에러 발생: %s", e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="식사 수정 중 오류가 발생했습니다.",
+        ) from e
 
 
 def update_meal_menu(meal: Meal, menu_edit_list: str | list[str]) -> list[str]:
