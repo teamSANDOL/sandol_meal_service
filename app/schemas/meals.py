@@ -58,6 +58,12 @@ class MealRegister(BaseMeal):
     """
 
 
+class MealUpdate(BaseMeal):
+    """식사 전체 수정 모델"""
+
+    restaurant_id: int
+
+
 class MealRegisterResponse(BaseModel):
     """식사 등록 응답 모델
 
