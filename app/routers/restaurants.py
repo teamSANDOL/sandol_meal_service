@@ -46,12 +46,14 @@ from app.schemas.restaurants import (
     ApproverResponse,
     EstablishmentType,
     ESTABLISHMENT_TYPE_DESCRIPTION,
+    RestaurantCreateRequest,
     RestaurantRequest,
     RestaurantResponse,
     SubmissionResponse,
     TimeRange,
     RejectRestaurantRequest,
     RestaurantSubmission as RestaurantSubmissionSchema,
+    RestaurantUpdateRequest,
 )
 from app.schemas.users import AdminUserSchema
 from app.utils.db import (
@@ -59,17 +61,22 @@ from app.utils.db import (
     get_current_user,
     get_db,
     check_admin_user,
+    get_or_create_user,
     resolve_user_ids,
 )
 from app.utils.restaurants import (
     build_location_schema,
     build_operating_hours_entries,
+    build_restaurant_model,
+    build_restaurant_schema,
+    fetch_owner_user_id,
     fetch_operating_hours_dict,
     fetch_restaurant_submission,
     get_restaurant_or_404,
     get_restaurant_with_permission,
     get_submission_or_404,
     get_submission_with_permission,
+    replace_restaurant_operating_hours,
 )
 from app.utils.http import get_async_client
 
@@ -203,6 +210,77 @@ async def restaurant_submit_request(
 
     return BaseSchema[SubmissionResponse](
         data=SubmissionResponse(request_id=new_submission.id)
+    )
+
+
+@router.post("/", status_code=Config.HttpStatus.CREATED)
+async def create_restaurant(
+    request: RestaurantCreateRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_admin_user)],
+):
+    """관리자가 특정 owner_user_id를 가진 식당을 직접 생성합니다."""
+    _ = current_user
+    if request.location is None or request.opening_time is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="location, opening_time 필드는 필수입니다.",
+        )
+
+    normalized_owner_user_id = request.owner_user_id.strip()
+    if not normalized_owner_user_id:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="owner_user_id는 필수입니다.",
+        )
+
+    operation_hours_dict = {
+        "opening_time": request.opening_time,
+        "break_time": request.break_time,
+        "breakfast_time": request.breakfast_time,
+        "brunch_time": request.brunch_time,
+        "lunch_time": request.lunch_time,
+        "dinner_time": request.dinner_time,
+    }
+
+    try:
+        owner_user = await get_or_create_user(normalized_owner_user_id, db)
+        new_restaurant = build_restaurant_model(request, owner_id=owner_user.id)
+        db.add(new_restaurant)
+        await db.flush()
+
+        operating_hours_entries = build_operating_hours_entries(
+            operation_hours_dict,
+            restaurant_id=new_restaurant.id,
+        )
+        db.add_all(operating_hours_entries)
+
+        await db.commit()
+        await db.refresh(new_restaurant)
+    except HTTPException:
+        await db.rollback()
+        raise
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as e:
+        await db.rollback()
+        logger.error("Restaurant 생성 중 예외 발생: %s", e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
+
+    operating_hours = await fetch_operating_hours_dict(db, restaurant_id=new_restaurant.id)
+    return BaseSchema[RestaurantResponse](
+        data=build_restaurant_schema(
+            new_restaurant,
+            operating_hours,
+            owner_user_id=owner_user.user_id,
+        )
     )
 
 
@@ -445,6 +523,7 @@ async def get_restaurant(
     operating_hours_dict = await fetch_operating_hours_dict(
         db, restaurant_id=restaurant_id
     )
+    owner_user_id = await fetch_owner_user_id(db, restaurant.owner)
     logger.debug(
         "Found %s operating hours for restaurant id %s",
         len(operating_hours_dict),
@@ -455,6 +534,7 @@ async def get_restaurant(
         id=restaurant.id,
         name=restaurant.name,
         owner=restaurant.owner,
+        owner_user_id=owner_user_id,
         establishment_type=cast(EstablishmentType, restaurant.establishment_type),
         price=restaurant.price,
         location=build_location_schema(
@@ -474,6 +554,100 @@ async def get_restaurant(
     )
 
     return BaseSchema[RestaurantResponse](data=response_data)
+
+
+@router.patch("/{restaurant_id}")
+async def update_restaurant(
+    restaurant_id: int,
+    request: RestaurantUpdateRequest,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_admin_user)],
+):
+    """관리자가 저장된 식당 정보를 수정합니다."""
+    _ = (restaurant_id, current_user)
+    if request.location is None or request.opening_time is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="location, opening_time 필드는 필수입니다.",
+        )
+
+    location = request.location
+    operation_hours_dict = {
+        "opening_time": request.opening_time,
+        "break_time": request.break_time,
+        "breakfast_time": request.breakfast_time,
+        "brunch_time": request.brunch_time,
+        "lunch_time": request.lunch_time,
+        "dinner_time": request.dinner_time,
+    }
+
+    try:
+        owner_user_id = request.owner_user_id.strip() if request.owner_user_id else None
+        if owner_user_id is not None and not owner_user_id:
+            raise HTTPException(
+                status_code=Config.HttpStatus.BAD_REQUEST,
+                detail="owner_user_id는 비어 있을 수 없습니다.",
+            )
+
+        resolved_owner = None
+        if owner_user_id is not None:
+            resolved_owner = await get_or_create_user(owner_user_id, db)
+        else:
+            resolved_owner = await db.get(User, restaurant.owner)
+            if resolved_owner is None:
+                raise HTTPException(
+                    status_code=Config.HttpStatus.NOT_FOUND,
+                    detail="기존 owner 사용자를 찾을 수 없습니다.",
+                )
+
+        build_restaurant_model(request, owner_id=resolved_owner.id)
+
+        restaurant.name = request.name
+        restaurant.owner = resolved_owner.id
+        restaurant.establishment_type = request.establishment_type
+        restaurant.price = request.price
+        restaurant.is_campus = location.is_campus
+        restaurant.building_name = location.building
+        restaurant.naver_map_link = (location.map_links or {}).get("naver")
+        restaurant.kakao_map_link = (location.map_links or {}).get("kakao")
+        restaurant.latitude = location.latitude
+        restaurant.longitude = location.longitude
+
+        await replace_restaurant_operating_hours(
+            db,
+            restaurant_id=restaurant.id,
+            operation_hours_dict=operation_hours_dict,
+        )
+
+        db.add(restaurant)
+        await db.commit()
+        await db.refresh(restaurant)
+    except HTTPException:
+        await db.rollback()
+        raise
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as e:
+        await db.rollback()
+        logger.error("Restaurant 수정 중 예외 발생: %s", e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
+
+    operating_hours = await fetch_operating_hours_dict(db, restaurant_id=restaurant.id)
+    return BaseSchema[RestaurantResponse](
+        data=build_restaurant_schema(
+            restaurant,
+            operating_hours,
+            owner_user_id=resolved_owner.user_id,
+        )
+    )
 
 
 @router.delete("/{restaurant_id}", status_code=Config.HttpStatus.NO_CONTENT)
@@ -621,6 +795,7 @@ async def get_restaurants(  # noqa: PLR0913
             id=restaurant.id,
             name=restaurant.name,
             owner=restaurant.owner,
+            owner_user_id=await fetch_owner_user_id(db, restaurant.owner),
             establishment_type=cast(EstablishmentType, restaurant.establishment_type),
             price=restaurant.price,
             location=build_location_schema(
