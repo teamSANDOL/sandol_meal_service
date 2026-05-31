@@ -113,6 +113,7 @@ class RestaurantResponse(RestaurantSchema):
 
     id: int
     owner: Optional[int] = None
+    owner_user_id: Optional[str] = None
 
 
 class RestaurantRequest(RestaurantSchema):
@@ -129,6 +130,18 @@ class RestaurantRequest(RestaurantSchema):
                 "fixed_korean_buffet 및 variable_korean_buffet 식당은 price 필드가 필수입니다."
             )
         return self
+
+
+class RestaurantCreateRequest(RestaurantRequest):
+    """POST /restaurants/ 엔드포인트 요청 바디를 나타내는 클래스입니다."""
+
+    owner_user_id: str
+
+
+class RestaurantUpdateRequest(RestaurantRequest):
+    """PATCH /restaurants/{id} 엔드포인트 요청 바디를 나타내는 클래스입니다."""
+
+    owner_user_id: Optional[str] = None
 
 
 class RestaurantSubmission(RestaurantSchema):
