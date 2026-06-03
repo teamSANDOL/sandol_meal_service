@@ -9,7 +9,7 @@ from sqlalchemy.orm import declarative_base
 from app.config import Config
 
 # 비동기 SQLAlchemy 엔진 생성
-async_engine = create_async_engine(Config.DATABASE_URL, echo=True)
+async_engine = create_async_engine(Config.DATABASE_URL)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=async_engine,
