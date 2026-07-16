@@ -24,11 +24,13 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
-from typing import Annotated, cast
+from datetime import datetime, timezone
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi_pagination import Params, add_pagination, paginate
-from sqlalchemy import case, delete, false, or_
+from sqlalchemy import case, delete, false, insert, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from httpx import AsyncClient
@@ -37,8 +39,10 @@ from app.config import logger, Config
 from app.models.restaurants import (
     OperatingHours,
     Restaurant,
+    RestaurantManagerApplication,
     RestaurantSubmission,
 )
+from app.models.associations import restaurant_manager_association
 from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.pagination import CustomPage
@@ -52,10 +56,17 @@ from app.schemas.restaurants import (
     SubmissionResponse,
     TimeRange,
     RejectRestaurantRequest,
+    RestaurantManagerRequest,
+    RestaurantManagerResponse,
+    RestaurantManagerApplicationCreateResponse,
+    RestaurantManagerApplicationResponse,
+    RestaurantManagerApprovalResponse,
     RestaurantSubmission as RestaurantSubmissionSchema,
     RestaurantUpdateRequest,
+    UserProfileResponse,
 )
 from app.schemas.users import AdminUserSchema
+from app.services.user_service import get_keycloak_user_profile
 from app.utils.db import (
     get_admin_user,
     get_current_user,
@@ -81,6 +92,57 @@ from app.utils.restaurants import (
 from app.utils.http import get_async_client
 
 router = APIRouter(prefix="/restaurants", tags=["Restaurant"])
+
+
+async def _ensure_restaurant_owner_or_admin(
+    restaurant: Restaurant,
+    current_user: User,
+) -> None:
+    """식당 owner 또는 admin 권한을 확인합니다."""
+    if restaurant.owner == current_user.id:
+        return
+    admin_user = await check_admin_user(current_user)
+    if admin_user.is_admin:
+        return
+    raise HTTPException(
+        status_code=Config.HttpStatus.FORBIDDEN,
+        detail="해당 식당 manager 신청을 처리할 권한이 없습니다.",
+    )
+
+
+async def _build_manager_application_response(
+    application: RestaurantManagerApplication,
+    db: AsyncSession,
+) -> RestaurantManagerApplicationResponse:
+    """Manager 신청 ORM 객체를 응답 스키마로 변환합니다."""
+    applicant = await db.get(User, application.applicant)
+    if applicant is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="신청 사용자를 찾을 수 없습니다.",
+        )
+    profile = await get_keycloak_user_profile(applicant.user_id)
+    display_name = profile.get("display_name") or applicant.user_id
+    return RestaurantManagerApplicationResponse(
+        id=application.id,
+        restaurant_id=application.restaurant_id,
+        applicant=application.applicant,
+        applicant_user_id=applicant.user_id,
+        applicant_profile=UserProfileResponse(
+            user_id=applicant.user_id,
+            display_name=display_name,
+            username=profile.get("username"),
+            email=profile.get("email"),
+        ),
+        status=cast(
+            Literal["pending", "approved", "rejected"],
+            application.status,
+        ),
+        submitted_time=application.submitted_time,
+        reviewer=application.reviewer,
+        reviewed_time=application.reviewed_time,
+        rejection_message=application.rejection_message,
+    )
 
 
 @router.get("/requests", response_model=CustomPage[RestaurantSubmissionSchema])
@@ -497,6 +559,339 @@ async def restaurant_submit_delete(
     await db.delete(submission)
     await db.commit()
     logger.info("Submission with id %s deleted successfully", request_id)
+
+
+@router.post(
+    "/{restaurant_id}/manager-requests",
+    status_code=Config.HttpStatus.CREATED,
+    response_model=BaseSchema[RestaurantManagerApplicationCreateResponse],
+)
+async def create_restaurant_manager_application(
+    restaurant_id: int,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """일반 사용자가 특정 식당 manager 등록을 신청합니다."""
+    if restaurant.owner == current_user.id:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="식당 owner는 manager 신청을 할 수 없습니다.",
+        )
+
+    manager_result = await db.execute(
+        select(restaurant_manager_association.c.user_id).where(
+            restaurant_manager_association.c.restaurant_id == restaurant_id,
+            restaurant_manager_association.c.user_id == current_user.id,
+        )
+    )
+    if manager_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.CONFLICT,
+            detail="이미 등록된 manager입니다.",
+        )
+
+    pending_result = await db.execute(
+        select(RestaurantManagerApplication.id).where(
+            RestaurantManagerApplication.restaurant_id == restaurant_id,
+            RestaurantManagerApplication.applicant == current_user.id,
+            RestaurantManagerApplication.status == "pending",
+        )
+    )
+    if pending_result.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.CONFLICT,
+            detail="이미 처리 대기 중인 manager 신청이 있습니다.",
+        )
+
+    application = RestaurantManagerApplication(
+        restaurant_id=restaurant.id,
+        applicant=current_user.id,
+        status="pending",
+    )
+    try:
+        db.add(application)
+        await db.commit()
+        await db.refresh(application)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=Config.HttpStatus.CONFLICT,
+            detail="이미 처리 대기 중인 manager 신청이 있습니다.",
+        ) from exc
+    except Exception as e:
+        await db.rollback()
+        logger.error("Restaurant manager 신청 생성 중 예외 발생: %s", e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
+
+    return BaseSchema[RestaurantManagerApplicationCreateResponse](
+        data=RestaurantManagerApplicationCreateResponse(
+            request_id=application.id,
+            restaurant_id=restaurant.id,
+        )
+    )
+
+
+@router.get(
+    "/{restaurant_id}/manager-requests",
+    response_model=BaseSchema[list[RestaurantManagerApplicationResponse]],
+)
+async def get_restaurant_manager_applications(
+    restaurant_id: int,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status: str = Query("pending", description="신청 상태 필터"),
+):
+    """식당 owner 또는 admin이 manager 신청 목록을 조회합니다."""
+    await _ensure_restaurant_owner_or_admin(restaurant, current_user)
+    if status not in {"pending", "approved", "rejected", "all"}:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="status 값이 올바르지 않습니다.",
+        )
+
+    stmt = select(RestaurantManagerApplication).where(
+        RestaurantManagerApplication.restaurant_id == restaurant_id
+    )
+    if status != "all":
+        stmt = stmt.where(RestaurantManagerApplication.status == status)
+    stmt = stmt.order_by(RestaurantManagerApplication.submitted_time.desc())
+    result = await db.execute(stmt)
+    applications = result.scalars().all()
+    response_data = [
+        await _build_manager_application_response(application, db)
+        for application in applications
+    ]
+    return BaseSchema[list[RestaurantManagerApplicationResponse]](data=response_data)
+
+
+@router.post(
+    "/{restaurant_id}/manager-requests/{request_id}/approval",
+    response_model=BaseSchema[RestaurantManagerApprovalResponse],
+)
+async def approve_restaurant_manager_application(
+    restaurant_id: int,
+    request_id: int,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """식당 owner 또는 admin이 manager 신청을 승인합니다."""
+    await _ensure_restaurant_owner_or_admin(restaurant, current_user)
+    result = await db.execute(
+        select(RestaurantManagerApplication).where(
+            RestaurantManagerApplication.id == request_id,
+            RestaurantManagerApplication.restaurant_id == restaurant_id,
+        )
+    )
+    application = result.scalar_one_or_none()
+    if application is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="manager 신청을 찾을 수 없습니다.",
+        )
+    if application.status != "pending":
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="이미 처리된 manager 신청입니다.",
+        )
+
+    applicant = await db.get(User, application.applicant)
+    if applicant is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="신청 사용자를 찾을 수 없습니다.",
+        )
+
+    existing_result = await db.execute(
+        select(restaurant_manager_association.c.user_id).where(
+            restaurant_manager_association.c.restaurant_id == restaurant_id,
+            restaurant_manager_association.c.user_id == applicant.id,
+        )
+    )
+    try:
+        if existing_result.scalar_one_or_none() is None:
+            await db.execute(
+                insert(restaurant_manager_association).values(
+                    restaurant_id=restaurant_id,
+                    user_id=applicant.id,
+                )
+            )
+        application.status = "approved"
+        application.reviewer = current_user.id
+        application.reviewed_time = datetime.now(timezone.utc)
+        db.add(application)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        application.status = "approved"
+        application.reviewer = current_user.id
+        application.reviewed_time = datetime.now(timezone.utc)
+        db.add(application)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error("Restaurant manager 신청 승인 중 예외 발생: %s", e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
+
+    return BaseSchema[RestaurantManagerApprovalResponse](
+        data=RestaurantManagerApprovalResponse(
+            restaurant_id=restaurant_id,
+            user_id=applicant.user_id,
+            request_id=application.id,
+        )
+    )
+
+
+@router.get(
+    "/{restaurant_id}/managers",
+    response_model=BaseSchema[list[RestaurantManagerResponse]],
+)
+async def get_restaurant_managers(
+    restaurant_id: int,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_admin_user)],
+):
+    """관리자가 특정 식당의 manager 목록을 조회합니다."""
+    _ = (restaurant, current_user)
+    result = await db.execute(
+        select(User.user_id)
+        .select_from(restaurant_manager_association)
+        .join(User, restaurant_manager_association.c.user_id == User.id)
+        .where(restaurant_manager_association.c.restaurant_id == restaurant_id)
+        .order_by(User.user_id.asc())
+    )
+    managers = [
+        RestaurantManagerResponse(restaurant_id=restaurant_id, user_id=user_id)
+        for user_id in result.scalars().all()
+    ]
+    return BaseSchema[list[RestaurantManagerResponse]](data=managers)
+
+
+@router.post(
+    "/{restaurant_id}/managers",
+    status_code=Config.HttpStatus.CREATED,
+    response_model=BaseSchema[RestaurantManagerResponse],
+)
+async def add_restaurant_manager(
+    restaurant_id: int,
+    request: RestaurantManagerRequest,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_admin_user)],
+):
+    """관리자가 특정 식당에 manager를 등록합니다."""
+    _ = (restaurant, current_user)
+    manager_user_id = request.user_id.strip()
+    if not manager_user_id:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="manager user_id는 필수입니다.",
+        )
+
+    try:
+        manager = await get_or_create_user(manager_user_id, db)
+        existing_result = await db.execute(
+            select(restaurant_manager_association.c.user_id).where(
+                restaurant_manager_association.c.restaurant_id == restaurant_id,
+                restaurant_manager_association.c.user_id == manager.id,
+            )
+        )
+        if existing_result.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=Config.HttpStatus.CONFLICT,
+                detail="이미 등록된 manager입니다.",
+            )
+
+        await db.execute(
+            insert(restaurant_manager_association).values(
+                restaurant_id=restaurant_id,
+                user_id=manager.id,
+            )
+        )
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=Config.HttpStatus.CONFLICT,
+            detail="이미 등록된 manager입니다.",
+        ) from exc
+    except Exception as e:
+        await db.rollback()
+        logger.error("Restaurant manager 등록 중 예외 발생: %s", e)
+        raise HTTPException(
+            status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
+            detail="서버 내부 오류 발생",
+        ) from e
+
+    return BaseSchema[RestaurantManagerResponse](
+        data=RestaurantManagerResponse(
+            restaurant_id=restaurant_id,
+            user_id=manager.user_id,
+        )
+    )
+
+
+@router.delete(
+    "/{restaurant_id}/managers/{user_id}",
+    status_code=Config.HttpStatus.NO_CONTENT,
+)
+async def remove_restaurant_manager(
+    restaurant_id: int,
+    user_id: str,
+    restaurant: Annotated[Restaurant, Depends(get_restaurant_or_404)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_admin_user)],
+):
+    """관리자가 특정 식당의 manager를 해제합니다."""
+    _ = (restaurant, current_user)
+    normalized_user_id = user_id.strip()
+    if not normalized_user_id:
+        raise HTTPException(
+            status_code=Config.HttpStatus.BAD_REQUEST,
+            detail="manager user_id는 필수입니다.",
+        )
+
+    manager_result = await db.execute(
+        select(User).where(User.user_id == normalized_user_id)
+    )
+    manager = manager_result.scalar_one_or_none()
+    if manager is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="등록된 manager 사용자를 찾을 수 없습니다.",
+        )
+
+    existing_result = await db.execute(
+        select(restaurant_manager_association.c.user_id).where(
+            restaurant_manager_association.c.restaurant_id == restaurant_id,
+            restaurant_manager_association.c.user_id == manager.id,
+        )
+    )
+    if existing_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="해당 식당에 등록된 manager가 아닙니다.",
+        )
+
+    await db.execute(
+        delete(restaurant_manager_association).where(
+            restaurant_manager_association.c.restaurant_id == restaurant_id,
+            restaurant_manager_association.c.user_id == manager.id,
+        )
+    )
+    await db.commit()
 
 
 @router.get("/{restaurant_id}")
