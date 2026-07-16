@@ -5,8 +5,15 @@ from keycloak import KeycloakGetError, KeycloakOpenID, KeycloakAdmin
 from keycloak.exceptions import KeycloakError
 
 from app.config import Config, logger
-from app.schemas.users import AdminUserSchema, UserSchema
+from app.schemas.users import AdminUserSchema
 from app.models.user import User
+
+
+def _string_or_none(value: object) -> str | None:
+    """문자열 값만 정규화해 반환합니다."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 def get_keycloak_client() -> KeycloakOpenID:
     """동기 KeycloakOpenID 인스턴스를 생성합니다."""
@@ -44,8 +51,7 @@ def get_keycloak_admin_client() -> KeycloakAdmin:
 
 
 async def keycloak_user_exists_by_id(user_id: str) -> bool:
-    """
-    user_id(=Keycloak user_id)로 사용자 존재 여부만 확인합니다.
+    """user_id(=Keycloak user_id)로 사용자 존재 여부만 확인합니다.
 
     - 존재: True
     - 404: False
@@ -69,6 +75,45 @@ async def keycloak_user_exists_by_id(user_id: str) -> bool:
             status_code=Config.HttpStatus.INTERNAL_SERVER_ERROR,
             detail="사용자 조회 중 오류가 발생했습니다.",
         ) from e
+
+
+async def get_keycloak_user_profile(user_id: str) -> dict[str, str | None]:
+    """Keycloak user_id로 승인 화면 표시용 사용자 프로필을 조회합니다."""
+    admin = get_local_keycloak_admin_client()
+    try:
+        data = await admin.a_get_user(user_id=user_id)
+    except (KeycloakGetError, KeycloakError):
+        logger.warning("Keycloak 사용자 프로필 조회 실패: user_id=%s", user_id)
+        return {
+            "user_id": user_id,
+            "display_name": user_id,
+            "username": None,
+            "email": None,
+        }
+
+    attributes = data.get("attributes") if isinstance(data, dict) else None
+    attribute_name = None
+    if isinstance(attributes, dict):
+        for key in ("displayName", "name", "nickname"):
+            values = attributes.get(key)
+            if isinstance(values, list) and values:
+                attribute_name = _string_or_none(values[0])
+                if attribute_name:
+                    break
+
+    first_name = _string_or_none(data.get("firstName")) if isinstance(data, dict) else None
+    last_name = _string_or_none(data.get("lastName")) if isinstance(data, dict) else None
+    full_name = " ".join(part for part in (last_name, first_name) if part).strip()
+    username = _string_or_none(data.get("username")) if isinstance(data, dict) else None
+    email = _string_or_none(data.get("email")) if isinstance(data, dict) else None
+    display_name = attribute_name or full_name or username or email or user_id
+
+    return {
+        "user_id": user_id,
+        "display_name": display_name,
+        "username": username,
+        "email": email,
+    }
 
 
 async def check_admin_user(user: User) -> AdminUserSchema:
