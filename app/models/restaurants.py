@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     Boolean,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.inspection import inspect
@@ -199,6 +200,53 @@ class RestaurantSubmission(Base):
         Index("restaurant_submission_name_index", "name"),
         Index("restaurant_submission_status_index", "status"),
         Index("restaurant_submission_submitter_index", "submitter"),
+    )
+
+
+class RestaurantManagerApplication(Base):
+    """식당 manager 등록 신청 정보를 저장하는 클래스입니다."""
+
+    __tablename__ = "RestaurantManagerApplication"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    restaurant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("Restaurant.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    applicant: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("User.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    submitted_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    reviewer: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reviewed_time: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    rejection_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    restaurant: Mapped["Restaurant"] = relationship("Restaurant")
+    applicant_user: Mapped["User"] = relationship("User", foreign_keys=[applicant])
+
+    __table_args__ = (
+        Index("restaurant_manager_application_restaurant_index", "restaurant_id"),
+        Index("restaurant_manager_application_applicant_index", "applicant"),
+        Index("restaurant_manager_application_status_index", "status"),
+        Index(
+            "restaurant_manager_application_pending_unique",
+            "restaurant_id",
+            "applicant",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
     )
 
 

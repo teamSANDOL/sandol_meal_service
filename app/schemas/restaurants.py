@@ -144,6 +144,62 @@ class RestaurantUpdateRequest(RestaurantRequest):
     owner_user_id: Optional[str] = None
 
 
+class RestaurantManagerRequest(BaseModel):
+    """식당 manager 등록 요청 바디를 나타내는 클래스입니다."""
+
+    user_id: str
+
+
+class RestaurantManagerResponse(BaseModel):
+    """식당 manager 응답 바디를 나타내는 클래스입니다."""
+
+    restaurant_id: int
+    user_id: str
+
+
+class UserProfileResponse(BaseModel):
+    """사용자 표시용 프로필 응답 바디를 나타내는 클래스입니다."""
+
+    user_id: str
+    display_name: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+
+class RestaurantManagerApplicationCreateResponse(BaseModel):
+    """식당 manager 등록 신청 생성 응답 바디를 나타내는 클래스입니다."""
+
+    status: Literal["pending"] = "pending"
+    request_id: int
+    restaurant_id: int
+    message: Optional[str] = "Manager 등록 신청이 접수되었습니다."
+
+
+class RestaurantManagerApplicationResponse(BaseModel):
+    """식당 manager 등록 신청 응답 바디를 나타내는 클래스입니다."""
+
+    id: int
+    restaurant_id: int
+    applicant: int
+    applicant_user_id: str
+    applicant_profile: UserProfileResponse
+    status: Literal["pending", "approved", "rejected"]
+    submitted_time: datetime
+    reviewer: Optional[int] = None
+    reviewed_time: Optional[datetime] = None
+    rejection_message: Optional[str] = None
+
+
+class RestaurantManagerApprovalResponse(BaseModel):
+    """식당 manager 등록 신청 승인 응답 바디를 나타내는 클래스입니다."""
+
+    status: Literal["approved"] = "approved"
+    restaurant_id: int
+    user_id: str
+    request_id: int
+    message: Optional[str] = "Manager 등록 신청이 승인되었습니다."
+
+
 class RestaurantSubmission(RestaurantSchema):
     """레스토랑 제출 정보를 나타내는 클래스입니다.
 

@@ -7,6 +7,7 @@ from app.models.meals import (
 from app.models.restaurants import (
     Restaurant,
     RestaurantSubmission,
+    RestaurantManagerApplication,
     OperatingHours,
 )
 from app.models.user import User
@@ -19,6 +20,7 @@ __all__ = [
     "Meal",
     "Restaurant",
     "RestaurantSubmission",
+    "RestaurantManagerApplication",
     "OperatingHours",
     "User",
     "restaurant_manager_association",
