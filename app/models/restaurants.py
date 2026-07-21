@@ -20,6 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.inspection import inspect
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.database import Base
 from app.models.associations import restaurant_manager_association
@@ -30,6 +31,7 @@ class User(Protocol):
 
 # Service Account의 User.id를 저장할 변수 (lifespan에서 설정)
 _service_state: dict[str, int | None] = {"user_id": None}
+DELETED_RESTAURANT_NAME_PREFIX = "[삭제됨] "
 
 def set_service_user_id(user_id: int):
     """Service Account의 User.id를 설정합니다."""
@@ -109,7 +111,8 @@ class Restaurant(Base):
     def soft_delete(self):
         """식당을 소프트 삭제 처리 (이름 수정 + 관계 초기화 + 필드 제거)"""
         # 1. 이름·소유자·관리자 관계 초기화
-        self.name = f"[삭제됨] {self.name}"
+        if not self.name.startswith(DELETED_RESTAURANT_NAME_PREFIX):
+            self.name = f"{DELETED_RESTAURANT_NAME_PREFIX}{self.name}"
         self.owner = get_service_user_id()  # Service User의 DB ID 사용
         self.managers.clear()
 
@@ -125,6 +128,10 @@ class Restaurant(Base):
 
         # commit은 호출하는 쪽에서 수행
 
+
+def active_restaurant_clause() -> ColumnElement[bool]:
+    """일반 조회에서 소프트 삭제된 식당을 제외하는 조건을 반환합니다."""
+    return ~Restaurant.name.startswith(DELETED_RESTAURANT_NAME_PREFIX)
 
 class RestaurantSubmission(Base):
     """식당 정보 제출을 관리하는 클래스

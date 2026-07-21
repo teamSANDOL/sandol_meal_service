@@ -38,10 +38,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.sql import over
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Config, logger
 from app.models.meals import Meal
-from app.models.restaurants import Restaurant
+from app.models.restaurants import Restaurant, active_restaurant_clause
 from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.meals import (
@@ -71,6 +72,11 @@ from app.utils.meals import (
 from app.utils.restaurants import get_restaurant_with_permission
 
 router = APIRouter(prefix="/meals", tags=["Meals"])
+
+
+def _active_restaurant_meal_clause() -> ColumnElement[bool]:
+    """소프트 삭제되지 않은 식당의 식단만 조회하는 조건을 반환합니다."""
+    return Meal.restaurant.has(active_restaurant_clause())
 
 
 @router.get("", response_model=CustomPage[MealResponse])
@@ -110,7 +116,7 @@ async def list_meals(
         meal_type,
     )
 
-    query = select(Meal).options(
+    query = select(Meal).where(_active_restaurant_meal_clause()).options(
         selectinload(Meal.restaurant), selectinload(Meal.meal_type)
     )
 
@@ -178,7 +184,7 @@ async def latest_meals_by_restaurant(
         order_by=Meal.registered_at.desc(),
     ).label("rnum")
 
-    selected = select(Meal, row_number)
+    selected = select(Meal, row_number).where(_active_restaurant_meal_clause())
 
     if restaurant_name:
         selected = selected.where(
@@ -243,7 +249,7 @@ async def get_meal(
 
     result = await db.execute(
         select(Meal)
-        .where(Meal.id == meal_id)
+        .where(Meal.id == meal_id, _active_restaurant_meal_clause())
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -301,7 +307,10 @@ async def latest_meal_by_restaurant(
 
     subquery = (
         select(Meal, row_number)
-        .where(Meal.restaurant_id == restaurant_id)
+        .where(
+            Meal.restaurant_id == restaurant_id,
+            _active_restaurant_meal_clause(),
+        )
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
         .subquery()
@@ -379,7 +388,10 @@ async def list_meals_by_restaurant(
 
     query = (
         select(Meal)
-        .where(Meal.restaurant_id == restaurant_id)
+        .where(
+            Meal.restaurant_id == restaurant_id,
+            _active_restaurant_meal_clause(),
+        )
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -432,7 +444,9 @@ async def delete_meal(
     logger.info("User %d attempting to delete meal %d", current_user.id, meal_id)
 
     # ✅ 1️⃣ Meal 조회
-    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    result = await db.execute(
+        select(Meal).where(Meal.id == meal_id, _active_restaurant_meal_clause())
+    )
     meal = result.scalars().first()
 
     if not meal:
@@ -543,7 +557,7 @@ async def update_meal(
 
     result = await db.execute(
         select(Meal)
-        .where(Meal.id == meal_id)
+        .where(Meal.id == meal_id, _active_restaurant_meal_clause())
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -570,7 +584,7 @@ async def update_meal(
 
     result = await db.execute(
         select(Meal)
-        .where(Meal.id == meal_id)
+        .where(Meal.id == meal_id, _active_restaurant_meal_clause())
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -622,7 +636,9 @@ async def delete_menu(
         "User %d attempting to delete menu for meal %d", current_user.id, meal_id
     )
 
-    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    result = await db.execute(
+        select(Meal).where(Meal.id == meal_id, _active_restaurant_meal_clause())
+    )
     meal = result.scalars().first()
 
     if not meal:
@@ -669,7 +685,9 @@ async def edit_meal_menu(
     """
     logger.info("User %d attempting to edit menu for meal %d", current_user.id, meal_id)
 
-    result = await db.execute(select(Meal).where(Meal.id == meal_id))
+    result = await db.execute(
+        select(Meal).where(Meal.id == meal_id, _active_restaurant_meal_clause())
+    )
     meal = result.scalars().first()
 
     if not meal:

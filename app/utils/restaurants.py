@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.models.user import User
-from app.models.restaurants import OperatingHours, Restaurant, RestaurantSubmission
+from app.models.restaurants import (
+    OperatingHours,
+    Restaurant,
+    RestaurantSubmission,
+    active_restaurant_clause,
+)
 from app.schemas.restaurants import (
     BUFFET_ESTABLISHMENT_TYPES,
     EstablishmentType,
@@ -381,7 +386,7 @@ async def get_restaurant_or_404(
 
     result = await db.execute(
         select(Restaurant)
-        .filter(Restaurant.id == restaurant_id)
+        .filter(Restaurant.id == restaurant_id, active_restaurant_clause())
     )
     restaurant = result.scalars().first()
     if not restaurant:
@@ -425,7 +430,7 @@ async def get_restaurant_with_permission(
     # ✅ 1️⃣ 식당 존재 여부 확인
     result = await db.execute(
         select(Restaurant)
-        .filter(Restaurant.id == restaurant_id)
+        .filter(Restaurant.id == restaurant_id, active_restaurant_clause())
         .options(joinedload(Restaurant.managers))  # managers 관계 미리 로드
     )
     restaurant = result.scalars().first()

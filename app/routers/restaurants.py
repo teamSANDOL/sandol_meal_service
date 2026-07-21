@@ -41,6 +41,7 @@ from app.models.restaurants import (
     Restaurant,
     RestaurantManagerApplication,
     RestaurantSubmission,
+    active_restaurant_clause,
 )
 from app.models.associations import restaurant_manager_association
 from app.models.user import User
@@ -1068,10 +1069,11 @@ async def delete_restaurant(
         HTTPException(404): 해당 식당을 찾을 수 없는 경우 발생합니다.
         HTTPException(500): 서버 내부 오류로 인해 삭제 처리가 실패한 경우 발생합니다.
     """
+    current_user_id = current_user.id
     logger.info(
         "Delete request received for restaurant_id: %s by user: %s",
         restaurant_id,
-        current_user.id,
+        current_user_id,
     )
 
     try:
@@ -1080,8 +1082,8 @@ async def delete_restaurant(
             delete(OperatingHours).where(OperatingHours.restaurant_id == restaurant_id)
         )
 
-        # 식당 삭제
-        await db.execute(delete(Restaurant).where(Restaurant.id == restaurant_id))
+        # 기존 식단은 보존하되 식당과 식단이 일반 조회에 노출되지 않도록 처리
+        restaurant.soft_delete()
 
         # 트랜잭션 커밋
         await db.commit()
@@ -1089,15 +1091,27 @@ async def delete_restaurant(
         logger.info(
             "Restaurant %s deleted successfully by user %s",
             restaurant_id,
-            current_user.id,
+            current_user_id,
         )
 
+    except IntegrityError as e:
+        await db.rollback()
+        logger.warning(
+            "Restaurant %s could not be deleted by user %s because related data exists: %s",
+            restaurant_id,
+            current_user_id,
+            e,
+        )
+        raise HTTPException(
+            status_code=Config.HttpStatus.CONFLICT,
+            detail="연결된 데이터가 있는 식당은 삭제할 수 없습니다.",
+        ) from e
     except Exception as e:
         await db.rollback()
         logger.error(
             "Error occurred while deleting restaurant %s by user %s: %s",
             restaurant_id,
-            current_user.id,
+            current_user_id,
             e,
         )
         raise HTTPException(
@@ -1141,7 +1155,7 @@ async def get_restaurants(  # noqa: PLR0913
         owner_user_id,
         manager_user_id,
     )
-    stmt = select(Restaurant)
+    stmt = select(Restaurant).where(active_restaurant_clause())
 
     user_filters = []
     if owner_filter_requested and owner_id is not None:
