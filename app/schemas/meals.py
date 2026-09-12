@@ -14,7 +14,7 @@
 """
 
 from typing import Annotated
-from datetime import datetime
+from datetime import date as date_type, datetime
 from enum import Enum
 from pydantic import BaseModel
 
@@ -49,6 +49,7 @@ class BaseMeal(BaseModel):
 
     menu: list[str]
     meal_type: MealType
+    date: date_type
 
 
 class MealRegister(BaseMeal):
@@ -77,6 +78,7 @@ class MealRegisterResponse(BaseModel):
     id: int
     restaurant_id: int
     meal_type: MealType
+    date: date_type
     registered_at: Timestamp
 
 
