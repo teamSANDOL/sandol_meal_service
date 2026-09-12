@@ -30,6 +30,8 @@ dev = [
     "mypy>=1.15.0",
     "types-cachetools>=5.5.0.20240820",
     "types-pytz>=2025.1.0.20250204",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
 ]
 
 [tool.uv]
@@ -93,3 +95,7 @@ indent-style = "space"
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D", "S101", "PLR2004"]
+"tests/conftest.py" = ["E402"]
