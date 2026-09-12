@@ -26,6 +26,7 @@ from app.schemas.restaurants import (
     RestaurantSchema,
     RestaurantResponse,
     TimeRange,
+    UserProfileResponse,
 )
 from app.schemas.restaurants import RestaurantSubmission as RestaurantSubmissionSchema
 from app.utils.db import get_db, check_admin_user, get_current_user
@@ -68,6 +69,37 @@ async def fetch_operating_hours_dict(
     }
 
 
+async def resolve_user_profile_response(
+    user_id: str | None,
+) -> UserProfileResponse | None:
+    """Keycloak user_id를 표시용 프로필 스키마로 변환합니다.
+
+    TTL 캐시를 사용하며, 조회 실패 시에도 응답이 유지되도록 폴백합니다.
+    """
+    from app.services.user_service import get_cached_user_profile
+
+    if not user_id:
+        return None
+    profile = await get_cached_user_profile(user_id)
+    return UserProfileResponse(
+        user_id=user_id,
+        display_name=profile.get("display_name") or user_id,
+        username=profile.get("username"),
+        email=profile.get("email"),
+    )
+
+
+async def _resolve_submitter_profile(
+    submitter_id: int,
+    db: AsyncSession,
+) -> tuple[str | None, UserProfileResponse | None]:
+    """제출자 내부 ID를 Keycloak ID와 표시용 프로필로 변환합니다."""
+    user = await db.get(User, submitter_id)
+    if user is None:
+        return None, None
+    return user.user_id, await resolve_user_profile_response(user.user_id)
+
+
 async def fetch_restaurant_submission(
     submission: RestaurantSubmission,
     db: AsyncSession,
@@ -90,9 +122,15 @@ async def fetch_restaurant_submission(
         submission.id,
     )
 
+    submitter_user_id, submitter_profile = await _resolve_submitter_profile(
+        submission.submitter, db
+    )
+
     return RestaurantSubmissionSchema(
         status=cast(Literal["pending", "approved", "rejected"], submission.status),
         submitter=submission.submitter,
+        submitter_user_id=submitter_user_id,
+        submitter_profile=submitter_profile,
         submitted_time=submission.submitted_time,
         id=submission.id,
         name=submission.name,
@@ -173,12 +211,15 @@ def build_restaurant_schema(
     operating_hours: dict[str, TimeRange],
     *,
     owner_user_id: str | None = None,
+    owner_profile: UserProfileResponse | None = None,
 ) -> RestaurantResponse:
     """RestaurantResponse 스키마 생성.
 
     Args:
         restaurant (Restaurant): 식당 객체.
         operating_hours (dict[str, TimeRange]): 운영 시간 정보.
+        owner_user_id (str | None): 소유자 Keycloak ID.
+        owner_profile (UserProfileResponse | None): 소유자 표시용 프로필.
 
     Returns:
         RestaurantResponse: RestaurantResponse 스키마.
@@ -188,6 +229,7 @@ def build_restaurant_schema(
         name=restaurant.name,
         owner=restaurant.owner,
         owner_user_id=owner_user_id,
+        owner_profile=owner_profile,
         establishment_type=cast(EstablishmentType, restaurant.establishment_type),
         price=restaurant.price,
         location=Location(

@@ -67,7 +67,7 @@ from app.schemas.restaurants import (
     UserProfileResponse,
 )
 from app.schemas.users import AdminUserSchema
-from app.services.user_service import get_keycloak_user_profile
+from app.services.user_service import get_cached_user_profile
 from app.utils.db import (
     get_admin_user,
     get_current_user,
@@ -89,6 +89,7 @@ from app.utils.restaurants import (
     get_submission_or_404,
     get_submission_with_permission,
     replace_restaurant_operating_hours,
+    resolve_user_profile_response,
 )
 from app.utils.http import get_async_client
 
@@ -122,7 +123,7 @@ async def _build_manager_application_response(
             status_code=Config.HttpStatus.NOT_FOUND,
             detail="신청 사용자를 찾을 수 없습니다.",
         )
-    profile = await get_keycloak_user_profile(applicant.user_id)
+    profile = await get_cached_user_profile(applicant.user_id)
     display_name = profile.get("display_name") or applicant.user_id
     return RestaurantManagerApplicationResponse(
         id=application.id,
@@ -337,12 +338,15 @@ async def create_restaurant(
             detail="서버 내부 오류 발생",
         ) from e
 
-    operating_hours = await fetch_operating_hours_dict(db, restaurant_id=new_restaurant.id)
+    operating_hours = await fetch_operating_hours_dict(
+        db, restaurant_id=new_restaurant.id
+    )
     return BaseSchema[RestaurantResponse](
         data=build_restaurant_schema(
             new_restaurant,
             operating_hours,
             owner_user_id=owner_user.user_id,
+            owner_profile=await resolve_user_profile_response(owner_user.user_id),
         )
     )
 
@@ -771,7 +775,11 @@ async def get_restaurant_managers(
         .order_by(User.user_id.asc())
     )
     managers = [
-        RestaurantManagerResponse(restaurant_id=restaurant_id, user_id=user_id)
+        RestaurantManagerResponse(
+            restaurant_id=restaurant_id,
+            user_id=user_id,
+            profile=await resolve_user_profile_response(user_id),
+        )
         for user_id in result.scalars().all()
     ]
     return BaseSchema[list[RestaurantManagerResponse]](data=managers)
@@ -920,6 +928,7 @@ async def get_restaurant(
         db, restaurant_id=restaurant_id
     )
     owner_user_id = await fetch_owner_user_id(db, restaurant.owner)
+    owner_profile = await resolve_user_profile_response(owner_user_id)
     logger.debug(
         "Found %s operating hours for restaurant id %s",
         len(operating_hours_dict),
@@ -931,6 +940,7 @@ async def get_restaurant(
         name=restaurant.name,
         owner=restaurant.owner,
         owner_user_id=owner_user_id,
+        owner_profile=owner_profile,
         establishment_type=cast(EstablishmentType, restaurant.establishment_type),
         price=restaurant.price,
         location=build_location_schema(
@@ -1042,6 +1052,7 @@ async def update_restaurant(
             restaurant,
             operating_hours,
             owner_user_id=resolved_owner.user_id,
+            owner_profile=await resolve_user_profile_response(resolved_owner.user_id),
         )
     )
 
@@ -1200,11 +1211,13 @@ async def get_restaurants(  # noqa: PLR0913
             restaurant.id,
         )
 
+        restaurant_owner_user_id = await fetch_owner_user_id(db, restaurant.owner)
         response_data = RestaurantResponse(
             id=restaurant.id,
             name=restaurant.name,
             owner=restaurant.owner,
-            owner_user_id=await fetch_owner_user_id(db, restaurant.owner),
+            owner_user_id=restaurant_owner_user_id,
+            owner_profile=await resolve_user_profile_response(restaurant_owner_user_id),
             establishment_type=cast(EstablishmentType, restaurant.establishment_type),
             price=restaurant.price,
             location=build_location_schema(
