@@ -103,6 +103,16 @@ class RestaurantSchema(BaseModel):
     lunch_time: Optional[TimeRange] = None
     dinner_time: Optional[TimeRange] = None
 
+
+class UserProfileResponse(BaseModel):
+    """화면 표시용 사용자 프로필 응답 바디를 나타내는 클래스입니다."""
+
+    user_id: str
+    display_name: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+
 class RestaurantResponse(RestaurantSchema):
     """GET /restaurants/{id} 및 /restaurants 엔드포인트 응답 바디를 나타내는 클래스입니다.
 
@@ -114,6 +124,7 @@ class RestaurantResponse(RestaurantSchema):
     id: int
     owner: Optional[int] = None
     owner_user_id: Optional[str] = None
+    owner_profile: Optional[UserProfileResponse] = None
 
 
 class RestaurantRequest(RestaurantSchema):
@@ -122,10 +133,7 @@ class RestaurantRequest(RestaurantSchema):
     @model_validator(mode="after")
     def validate_price_for_establishment_type(self) -> Self:
         """한식 뷔페 유형에는 1인분 가격을 필수로 강제합니다."""
-        if (
-            self.establishment_type in BUFFET_ESTABLISHMENT_TYPES
-            and self.price is None
-        ):
+        if self.establishment_type in BUFFET_ESTABLISHMENT_TYPES and self.price is None:
             raise ValueError(
                 "fixed_korean_buffet 및 variable_korean_buffet 식당은 price 필드가 필수입니다."
             )
@@ -155,15 +163,7 @@ class RestaurantManagerResponse(BaseModel):
 
     restaurant_id: int
     user_id: str
-
-
-class UserProfileResponse(BaseModel):
-    """사용자 표시용 프로필 응답 바디를 나타내는 클래스입니다."""
-
-    user_id: str
-    display_name: str
-    username: Optional[str] = None
-    email: Optional[str] = None
+    profile: Optional[UserProfileResponse] = None
 
 
 class RestaurantManagerApplicationCreateResponse(BaseModel):
@@ -206,6 +206,8 @@ class RestaurantSubmission(RestaurantSchema):
     Attributes:
         status (Literal["pending", "approved", "rejected"]): 제출 상태
         submitter (int): 제출자 ID
+        submitter_user_id (Optional[str]): 제출자 Keycloak ID
+        submitter_profile (Optional[UserProfileResponse]): 제출자 표시용 프로필
         submitted_time (datetime): 제출 시간
         id (int): 제출 ID
         reviewed_time (Optional[datetime]): 검토 시간
@@ -215,6 +217,8 @@ class RestaurantSubmission(RestaurantSchema):
 
     status: Literal["pending", "approved", "rejected"] = "pending"
     submitter: int
+    submitter_user_id: Optional[str] = None
+    submitter_profile: Optional[UserProfileResponse] = None
     submitted_time: datetime
     id: int
     reviewed_time: Optional[datetime] = None
@@ -271,6 +275,7 @@ class UserSchema(BaseModel):
 
     class Config:
         """정의되지 않은 필드도 허용합니다."""
+
         extra = "allow"
 
 

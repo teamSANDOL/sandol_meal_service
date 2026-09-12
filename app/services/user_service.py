@@ -1,12 +1,24 @@
 """Authentication Service Module."""
 
+from cachetools import TTLCache
+
 from fastapi import HTTPException
 from keycloak import KeycloakGetError, KeycloakOpenID, KeycloakAdmin
 from keycloak.exceptions import KeycloakError
 
+from app.models.user import User
 from app.config import Config, logger
 from app.schemas.users import AdminUserSchema
-from app.models.user import User
+
+UserProfile = dict[str, str | None]
+
+#: user_id → 검증된 프로필. 목록 응답의 반복 조회를 흡수하는 짧은 LRU/TTL 캐시.
+_PROFILE_CACHE_TTL_SECONDS = 300
+_PROFILE_CACHE_MAX_ENTRIES = 1024
+_PROFILE_CACHE: TTLCache[str, UserProfile] = TTLCache(
+    maxsize=_PROFILE_CACHE_MAX_ENTRIES,
+    ttl=_PROFILE_CACHE_TTL_SECONDS,
+)
 
 
 def _string_or_none(value: object) -> str | None:
@@ -14,6 +26,7 @@ def _string_or_none(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
 
 def get_keycloak_client() -> KeycloakOpenID:
     """동기 KeycloakOpenID 인스턴스를 생성합니다."""
@@ -77,21 +90,65 @@ async def keycloak_user_exists_by_id(user_id: str) -> bool:
         ) from e
 
 
+async def get_cached_user_profile(user_id: str) -> dict[str, str | None]:
+    """TTL 캐시를 거쳐 Keycloak 사용자 프로필을 조회합니다.
+
+    목록 응답처럼 같은 사용자를 반복 조회하는 경로에서 Keycloak 부하를 줄입니다.
+    """
+    try:
+        return _PROFILE_CACHE[user_id].copy()
+    except KeyError:
+        profile, cacheable = await _fetch_user_profile(user_id)
+        if cacheable:
+            _PROFILE_CACHE[user_id] = profile.copy()
+        return profile.copy()
+
+
 async def get_keycloak_user_profile(user_id: str) -> dict[str, str | None]:
     """Keycloak user_id로 승인 화면 표시용 사용자 프로필을 조회합니다."""
+    profile, _ = await _fetch_user_profile(user_id)
+    return profile
+
+
+async def _fetch_user_profile(user_id: str) -> tuple[UserProfile, bool]:
+    """Keycloak 프로필을 조회하고 캐시 가능 여부를 함께 반환합니다.
+
+    Keycloak 조회 실패와 불완전한 응답은 기존 표시용 fallback을 반환하지만,
+    다음 호출에서 재시도할 수 있도록 캐시하지 않습니다. 예상하지 못한 예외는
+    호출자에게 그대로 전파합니다.
+    """
     admin = get_local_keycloak_admin_client()
     try:
         data = await admin.a_get_user(user_id=user_id)
     except (KeycloakGetError, KeycloakError):
         logger.warning("Keycloak 사용자 프로필 조회 실패: user_id=%s", user_id)
-        return {
-            "user_id": user_id,
-            "display_name": user_id,
-            "username": None,
-            "email": None,
-        }
+        return _fallback_user_profile(user_id), False
 
-    attributes = data.get("attributes") if isinstance(data, dict) else None
+    profile = _parse_user_profile(user_id, data)
+    if profile is None:
+        logger.warning(
+            "Keycloak 사용자 프로필 응답이 불완전합니다: user_id=%s", user_id
+        )
+        return _fallback_user_profile(user_id), False
+    return profile, True
+
+
+def _fallback_user_profile(user_id: str) -> UserProfile:
+    """프로필 조회 실패 시 기존 화면 계약을 위한 fallback을 생성합니다."""
+    return {
+        "user_id": user_id,
+        "display_name": user_id,
+        "username": None,
+        "email": None,
+    }
+
+
+def _parse_user_profile(user_id: str, data: object) -> UserProfile | None:
+    """완전한 Keycloak 응답을 표시용 프로필로 정규화합니다."""
+    if not isinstance(data, dict) or data.get("id") != user_id:
+        return None
+
+    attributes = data.get("attributes")
     attribute_name = None
     if isinstance(attributes, dict):
         for key in ("displayName", "name", "nickname"):
@@ -101,11 +158,11 @@ async def get_keycloak_user_profile(user_id: str) -> dict[str, str | None]:
                 if attribute_name:
                     break
 
-    first_name = _string_or_none(data.get("firstName")) if isinstance(data, dict) else None
-    last_name = _string_or_none(data.get("lastName")) if isinstance(data, dict) else None
+    first_name = _string_or_none(data.get("firstName"))
+    last_name = _string_or_none(data.get("lastName"))
     full_name = " ".join(part for part in (last_name, first_name) if part).strip()
-    username = _string_or_none(data.get("username")) if isinstance(data, dict) else None
-    email = _string_or_none(data.get("email")) if isinstance(data, dict) else None
+    username = _string_or_none(data.get("username"))
+    email = _string_or_none(data.get("email"))
     display_name = attribute_name or full_name or username or email or user_id
 
     return {
@@ -125,7 +182,9 @@ async def check_admin_user(user: User) -> AdminUserSchema:
     try:
         # 1) realm role 확인
         realm_roles = await keycloak_admin.a_get_realm_roles_of_user(user.user_id)
-        if any(r.get("name") == Config.REALM_GLOBAL_ADMIN_ROLE for r in (realm_roles or [])):
+        if any(
+            r.get("name") == Config.REALM_GLOBAL_ADMIN_ROLE for r in (realm_roles or [])
+        ):
             global_admin = True
 
         # 2) client role 확인 (meal_admin)
@@ -135,7 +194,10 @@ async def check_admin_user(user: User) -> AdminUserSchema:
                 user_id=user.user_id,
                 client_id=client_uuid,
             )
-            if any(r.get("name") == Config.MEAL_CLIENT_ADMIN_ROLE for r in (client_roles or [])):
+            if any(
+                r.get("name") == Config.MEAL_CLIENT_ADMIN_ROLE
+                for r in (client_roles or [])
+            ):
                 meal_admin = True
 
         return AdminUserSchema(
