@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 from typing import List
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 
 from sqlalchemy import (
@@ -14,7 +14,9 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    Date,
     DateTime,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator, JSON
@@ -82,6 +84,7 @@ class Meal(Base):
         BigInteger, ForeignKey("Restaurant.id"), nullable=False
     )
     menu: Mapped[List[str]] = mapped_column(NonEscapedJSON, nullable=False, default={})
+    date: Mapped[date] = mapped_column(Date, nullable=False)
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -106,4 +109,10 @@ class Meal(Base):
         Index("meal_restaurant_id_index", "restaurant_id"),
         Index("meal_meal_type_id_index", "meal_type_id"),
         Index("meal_updated_at_index", "updated_at"),
+        UniqueConstraint(
+            "restaurant_id",
+            "meal_type_id",
+            "date",
+            name="meal_restaurant_meal_type_date_unique",
+        ),
     )

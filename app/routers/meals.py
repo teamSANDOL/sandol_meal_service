@@ -28,6 +28,7 @@ API 목록:
 모든 API는 비동기적으로 동작하며, SQLAlchemy의 `AsyncSession`을 활용하여 데이터베이스와 통신합니다.
 """
 
+import datetime as dt
 from typing import Annotated, Optional
 
 from httpx import AsyncClient
@@ -38,11 +39,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.sql import over
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Config, logger
 from app.models.meals import Meal
-from app.models.restaurants import Restaurant, active_restaurant_clause
+from app.models.restaurants import Restaurant
 from app.models.user import User
 from app.schemas.base import BaseSchema
 from app.schemas.meals import (
@@ -60,6 +60,7 @@ from app.services.crawler_service import download_and_save_excel_to_db
 from app.utils.http import get_async_client
 from app.utils.db import get_admin_user, get_current_user, get_db
 from app.utils.meals import (
+    active_restaurant_meal_clause,
     apply_date_filter,
     delete_meal_menu,
     delete_meal_transaction,
@@ -74,29 +75,31 @@ from app.utils.restaurants import get_restaurant_with_permission
 router = APIRouter(prefix="/meals", tags=["Meals"])
 
 
-def _active_restaurant_meal_clause() -> ColumnElement[bool]:
-    """소프트 삭제되지 않은 식당의 식단만 조회하는 조건을 반환합니다."""
-    return Meal.restaurant.has(active_restaurant_clause())
-
-
 @router.get("", response_model=CustomPage[MealResponse])
-async def list_meals(
+async def list_meals(  # noqa: PLR0913
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: Optional[str] = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    start_date: Optional[str] = Query(
+        None, description="검색 시작 날짜 (YYYY-MM-DD 등 ISO 8601 날짜 형식)"
+    ),
+    end_date: Optional[str] = Query(
+        None, description="검색 종료 날짜 (YYYY-MM-DD 등 ISO 8601 날짜 형식)"
+    ),
     restaurant_name: Optional[str] = Query(None, description="식당 이름 (부분 일치)"),
-    meal_type: Optional[MealTypeSchema] = Query(None, description="식사 유형"),
+    meal_type: Annotated[
+        Optional[MealTypeSchema], Query(description="식사 유형")
+    ] = None,
 ) -> CustomPage[MealResponse]:
     """모든 식사 데이터를 페이징 형태로 반환합니다.
 
     특정 기간(start_date ~ end_date)에 해당하는 식사 데이터를 조회하고자 한다면
-    해당 쿼리 파라미터를 사용하여 필터링할 수 있습니다. 날짜 형식은 "YYYY-MM-DD"를 사용하며,
+    해당 쿼리 파라미터를 사용하여 필터링할 수 있습니다. 날짜 형식은 "YYYY-MM-DD" 등 ISO 8601
+    날짜 형식을 사용하며,
     만약 start_date나 end_date 중 하나만 입력하면 해당 날짜 기준으로 조회가 이뤄집니다.
 
     Args:
-        start_date (str, optional): 검색 시작 날짜 (YYYY-MM-DD). 기본값은 None입니다.
-        end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD). 기본값은 None입니다.
+        start_date (str, optional): 검색 시작 날짜 (YYYY-MM-DD 등 ISO 8601 날짜 형식). 기본값은 None입니다.
+        end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD 등 ISO 8601 날짜 형식). 기본값은 None입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 파라미터로, 페이지 번호와 페이지 크기를 지정합니다.
         restaurant_name (str, optional): 식당 이름 (부분 일치). 기본값은 None입니다.
@@ -106,7 +109,7 @@ async def list_meals(
         CustomPage[MealResponse]: 페이징된 MealResponse 객체 목록입니다.
 
     Raises:
-        HTTPException: start_date 또는 end_date가 잘못된 형식일 경우 400 에러가 발생합니다.
+        HTTPException: start_date 또는 end_date가 ISO 8601 날짜 형식이 아닐 경우 400 에러가 발생합니다.
     """
     logger.info(
         "Fetching all meals with filters: start_date=%s, end_date=%s, restaurant_name=%s, meal_type=%s",
@@ -116,8 +119,10 @@ async def list_meals(
         meal_type,
     )
 
-    query = select(Meal).where(_active_restaurant_meal_clause()).options(
-        selectinload(Meal.restaurant), selectinload(Meal.meal_type)
+    query = (
+        select(Meal)
+        .where(active_restaurant_meal_clause())
+        .options(selectinload(Meal.restaurant), selectinload(Meal.meal_type))
     )
 
     if restaurant_name:
@@ -128,6 +133,7 @@ async def list_meals(
         query = query.where(Meal.meal_type.has(name=meal_type.value))
 
     query = await apply_date_filter(query, start_date, end_date)
+    query = query.order_by(Meal.date.desc(), Meal.registered_at.desc(), Meal.id.desc())
 
     result = await db.execute(query)
     meals = result.scalars().all()
@@ -141,6 +147,7 @@ async def list_meals(
             restaurant_name=meal.restaurant.name,
             registered_at=meal.registered_at,
             updated_at=meal.updated_at,
+            date=meal.date,
         )
         for meal in meals
     ]
@@ -151,40 +158,40 @@ async def list_meals(
 async def latest_meals_by_restaurant(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: Optional[str] = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
     restaurant_name: Optional[str] = Query(None, description="식당 이름 (부분 일치)"),
-    meal_type: Optional[MealTypeSchema] = Query(None, description="식사 유형"),
+    meal_type: Annotated[
+        Optional[MealTypeSchema], Query(description="식사 유형")
+    ] = None,
+    date: Annotated[dt.date | None, Query(description="기준 날짜 (YYYY-MM-DD)")] = None,
 ):
-    """각 식당별 + 식사 유형별로 최신 식사 데이터를 1개씩 조회합니다.
+    """각 식당과 식사 유형 조합별 최신 식사 데이터를 1개씩 조회합니다.
 
-    특정 기간(start_date ~ end_date)에 해당하는 식사 데이터를 조회하고자 한다면
-    해당 쿼리 파라미터를 사용하여 필터링할 수 있습니다. 날짜 형식은 "YYYY-MM-DD"를 사용하며,
-    만약 start_date나 end_date 중 하나만 입력하면 해당 날짜 기준으로 조회가 이뤄집니다.
+    ``date``를 지정하면 해당 날짜를 포함해 그 이전에 제공된 식사 중 최신
+    데이터를 반환합니다. 지정하지 않으면 한국 시간 기준 오늘을 기준 날짜로 사용합니다.
 
     Args:
-        start_date (str, optional): 검색 시작 날짜 (YYYY-MM-DD). 기본값은 None입니다.
-        end_date (str, optional): 검색 종료 날짜 (YYYY-MM-DD). 기본값은 None입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 파라미터로, 페이지 번호와 페이지 크기를 지정합니다.
         restaurant_name (str, optional): 식당 이름 (부분 일치). 기본값은 None입니다.
         meal_type (MealTypeSchema, optional): 식사 유형. 기본값은 None입니다.
+        date (dt.date, optional): 이 날짜 이전의 최신 식단을 조회합니다.
 
     Returns:
         CustomPage[MealResponse]: 페이징된 MealResponse 객체 목록입니다.
-
-    Raises:
-        HTTPException: start_date 또는 end_date가 잘못된 형식일 경우 400 에러가 발생합니다.
     """
     logger.info("Fetching latest meal per restaurant + meal_type")
 
     row_number = over(
         func.row_number(),
         partition_by=(Meal.restaurant_id, Meal.meal_type_id),
-        order_by=Meal.registered_at.desc(),
+        order_by=(Meal.date.desc(), Meal.updated_at.desc(), Meal.id.desc()),
     ).label("rnum")
 
-    selected = select(Meal, row_number).where(_active_restaurant_meal_clause())
+    reference_date = date or dt.datetime.now(tz=Config.TZ).date()
+    selected = select(Meal, row_number).where(
+        active_restaurant_meal_clause(),
+        Meal.date <= reference_date,
+    )
 
     if restaurant_name:
         selected = selected.where(
@@ -193,7 +200,6 @@ async def latest_meals_by_restaurant(
     if meal_type:
         selected = selected.where(Meal.meal_type.has(name=meal_type.value))
 
-    selected = await apply_date_filter(selected, start_date, end_date)
     subquery = selected.subquery()
 
     meal_alias = aliased(Meal, subquery)
@@ -219,6 +225,7 @@ async def latest_meals_by_restaurant(
             restaurant_name=meal.restaurant.name,
             registered_at=meal.registered_at,
             updated_at=meal.updated_at,
+            date=meal.date,
         )
         for meal in meals
     ]
@@ -249,7 +256,7 @@ async def get_meal(
 
     result = await db.execute(
         select(Meal)
-        .where(Meal.id == meal_id, _active_restaurant_meal_clause())
+        .where(Meal.id == meal_id, active_restaurant_meal_clause())
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -271,6 +278,7 @@ async def get_meal(
         restaurant_name=meal.restaurant.name,
         registered_at=meal.registered_at,
         updated_at=meal.updated_at,
+        date=meal.date,
     )
 
     return BaseSchema[MealResponse](data=response_data)
@@ -283,6 +291,7 @@ async def latest_meal_by_restaurant(
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
+    date: Annotated[dt.date | None, Query(description="기준 날짜 (YYYY-MM-DD)")] = None,
 ):
     """식당 ID를 기준으로 각 식사 유형별 최신 식사 데이터를 조회합니다.
 
@@ -290,6 +299,7 @@ async def latest_meal_by_restaurant(
         restaurant_id (int): 조회할 식당의 고유 ID입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 파라미터입니다.
+        date (dt.date, optional): 이 날짜 이전의 최신 식단을 조회합니다.
 
     Returns:
         CustomPage[MealResponse]: 식사 유형별 최신 식사 데이터 목록입니다.
@@ -302,14 +312,16 @@ async def latest_meal_by_restaurant(
     row_number = over(
         func.row_number(),
         partition_by=Meal.meal_type_id,
-        order_by=Meal.registered_at.desc(),
+        order_by=(Meal.date.desc(), Meal.updated_at.desc(), Meal.id.desc()),
     ).label("rnum")
 
+    reference_date = date or dt.datetime.now(tz=Config.TZ).date()
     subquery = (
         select(Meal, row_number)
         .where(
             Meal.restaurant_id == restaurant_id,
-            _active_restaurant_meal_clause(),
+            active_restaurant_meal_clause(),
+            Meal.date <= reference_date,
         )
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
@@ -345,6 +357,7 @@ async def latest_meal_by_restaurant(
             restaurant_name=meal.restaurant.name,
             registered_at=meal.registered_at,
             updated_at=meal.updated_at,
+            date=meal.date,
         )
         for meal in meals
     ]
@@ -353,50 +366,64 @@ async def latest_meal_by_restaurant(
 
 
 @router.get("/restaurant/{restaurant_id}", response_model=CustomPage[MealResponse])
-async def list_meals_by_restaurant(
+async def list_meals_by_restaurant(  # noqa: PLR0913
     restaurant_id: int,
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[Params, Depends()],
-    start_date: Optional[str] = Query(None, description="검색 시작 날짜 (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="검색 종료 날짜 (YYYY-MM-DD)"),
+    start_date: Optional[str] = Query(
+        None, description="검색 시작 날짜 (YYYY-MM-DD 등 ISO 8601 날짜 형식)"
+    ),
+    end_date: Optional[str] = Query(
+        None, description="검색 종료 날짜 (YYYY-MM-DD 등 ISO 8601 날짜 형식)"
+    ),
+    meal_type: Annotated[
+        Optional[MealTypeSchema], Query(description="식사 유형")
+    ] = None,
 ):
     """특정 식당의 식사 데이터를 페이징 형태로 조회합니다.
 
     식당 ID를 기준으로 해당 식당의 모든 식사 데이터를 검색합니다.
     또한, `start_date`와 `end_date`를 입력하면 특정 기간 동안 제공된 식사만 조회할 수 있습니다.
-    날짜 형식은 `"YYYY-MM-DD"`을 사용하며, `start_date` 또는 `end_date` 중 하나만 입력하면 해당 날짜를 기준으로 조회됩니다.
+    날짜 형식은 `"YYYY-MM-DD"` 등 ISO 8601 날짜 형식을 사용하며, `start_date` 또는 `end_date` 중
+    하나만 입력하면 해당 날짜를 기준으로 조회됩니다.
 
     Args:
         restaurant_id (int): 조회할 식당의 고유 ID입니다.
         db (AsyncSession): 비동기 DB 세션 객체입니다.
         params (Params): 페이징 처리를 위한 FastAPI Pagination 객체입니다.
-        start_date (str, optional): 검색 시작 날짜 (예: `"2024-01-01"`). 기본값은 `None`입니다.
-        end_date (str, optional): 검색 종료 날짜 (예: `"2024-01-31"`). 기본값은 `None`입니다.
+        start_date (str, optional): 검색 시작 날짜 (예: `"2024-01-01"`, ISO 8601). 기본값은 `None`입니다.
+        end_date (str, optional): 검색 종료 날짜 (예: `"2024-01-31"`, ISO 8601). 기본값은 `None`입니다.
+        meal_type (MealTypeSchema, optional): 식사 유형. 기본값은 None입니다.
 
     Returns:
         CustomPage[MealResponse]: 해당 식당의 식사 데이터 목록을 포함하는 페이징된 응답 객체입니다.
 
     Raises:
-        HTTPException(400): `start_date` 또는 `end_date`가 잘못된 형식일 경우 발생합니다.
+        HTTPException(400): `start_date` 또는 `end_date`가 ISO 8601 날짜 형식이 아닐 경우 발생합니다.
     """
     logger.info(
-        "Fetching meals for restaurant_id=%d with filters: start_date=%s, end_date=%s",
+        "Fetching meals for restaurant_id=%d with filters: start_date=%s, end_date=%s, meal_type=%s",
         restaurant_id,
         start_date,
         end_date,
+        meal_type,
     )
 
     query = (
         select(Meal)
         .where(
             Meal.restaurant_id == restaurant_id,
-            _active_restaurant_meal_clause(),
+            active_restaurant_meal_clause(),
         )
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
 
+    if meal_type:
+        query = query.where(Meal.meal_type.has(name=meal_type.value))
+
     query = await apply_date_filter(query, start_date, end_date)
+    query = query.order_by(Meal.date.desc(), Meal.registered_at.desc(), Meal.id.desc())
 
     result = await db.execute(query)
     meals = result.scalars().all()
@@ -412,6 +439,7 @@ async def list_meals_by_restaurant(
             restaurant_name=meal.restaurant.name,
             registered_at=meal.registered_at,
             updated_at=meal.updated_at,
+            date=meal.date,
         )
         for meal in meals
     ]
@@ -445,7 +473,7 @@ async def delete_meal(
 
     # ✅ 1️⃣ Meal 조회
     result = await db.execute(
-        select(Meal).where(Meal.id == meal_id, _active_restaurant_meal_clause())
+        select(Meal).where(Meal.id == meal_id, active_restaurant_meal_clause())
     )
     meal = result.scalars().first()
 
@@ -472,6 +500,8 @@ async def force_sync_meal(
     이 함수는 학식 정보를 학교 사이트에서 다운로드하여 데이터베이스에 저장합니다.
 
     Args:
+        db (AsyncSession): 요청 수명 동안 유지되는 데이터베이스 세션입니다.
+        client (AsyncClient): 인증 의존성에서 사용하는 HTTP 클라이언트입니다.
         current_user (Annotated[AdminUserSchema, Depends]): 요청을 보낸 현재 사용자 객체입니다.
 
     Raises:
@@ -479,7 +509,7 @@ async def force_sync_meal(
     """
     try:
         logger.info("Force syncing meals...")
-        await download_and_save_excel_to_db()
+        await download_and_save_excel_to_db(force=True)
     except Exception as e:
         logger.error("Error during meal sync: %s", str(e))
         raise HTTPException(status_code=500, detail=f"실패: {str(e)}") from e
@@ -511,6 +541,7 @@ async def register_meal(
 
     Raises:
         HTTPException(403): 해당 식당에 식사를 등록할 권한이 없을 경우 발생합니다.
+        HTTPException(409): 동일한 식당, 식사 유형, 제공일의 식단이 이미 존재할 경우 발생합니다.
         HTTPException(500): 데이터베이스 오류로 인해 식사 등록에 실패한 경우 발생합니다.
     """
     logger.info(
@@ -526,8 +557,8 @@ async def register_meal(
         restaurant_id=restaurant_id,
         menu=meal_register.menu,
         meal_type_id=meal_type.id,
+        date=meal_register.date,
     )
-
     await register_meal_transaction(db, new_meal)
 
     logger.info(
@@ -538,6 +569,7 @@ async def register_meal(
         id=new_meal.id,
         restaurant_id=new_meal.restaurant_id,
         meal_type=MealTypeSchema(meal_type.name),
+        date=new_meal.date,
         registered_at=new_meal.registered_at,
     )
 
@@ -557,7 +589,7 @@ async def update_meal(
 
     result = await db.execute(
         select(Meal)
-        .where(Meal.id == meal_id, _active_restaurant_meal_clause())
+        .where(Meal.id == meal_id, active_restaurant_meal_clause())
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -580,11 +612,12 @@ async def update_meal(
         restaurant_id=meal_update.restaurant_id,
         meal_type_id=meal_type.id,
         menu=meal_update.menu,
+        date=meal_update.date,
     )
 
     result = await db.execute(
         select(Meal)
-        .where(Meal.id == meal_id, _active_restaurant_meal_clause())
+        .where(Meal.id == meal_id, active_restaurant_meal_clause())
         .options(selectinload(Meal.restaurant))
         .options(selectinload(Meal.meal_type))
     )
@@ -603,6 +636,7 @@ async def update_meal(
         restaurant_name=updated_meal.restaurant.name,
         registered_at=updated_meal.registered_at,
         updated_at=updated_meal.updated_at,
+        date=updated_meal.date,
     )
     return BaseSchema[MealResponse](data=response_data)
 
@@ -637,7 +671,7 @@ async def delete_menu(
     )
 
     result = await db.execute(
-        select(Meal).where(Meal.id == meal_id, _active_restaurant_meal_clause())
+        select(Meal).where(Meal.id == meal_id, active_restaurant_meal_clause())
     )
     meal = result.scalars().first()
 
@@ -686,7 +720,7 @@ async def edit_meal_menu(
     logger.info("User %d attempting to edit menu for meal %d", current_user.id, meal_id)
 
     result = await db.execute(
-        select(Meal).where(Meal.id == meal_id, _active_restaurant_meal_clause())
+        select(Meal).where(Meal.id == meal_id, active_restaurant_meal_clause())
     )
     meal = result.scalars().first()
 
