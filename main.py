@@ -42,13 +42,18 @@ async def lifespan(app: FastAPI):
     # 4. Restaurant 동기화
     await sync_restaurants()
 
-    # 5. 스케줄러 시작
-    start_scheduler()
+    # 5. iBook이 PDF를 제공하므로 기본적으로 엑셀 자동 수집을 비활성화한다.
+    scheduler_started = Config.MEAL_EXCEL_AUTO_SYNC_ENABLED
+    if scheduler_started:
+        start_scheduler()
+    else:
+        logger.info("[meal_excel_sync] 자동 동기화 비활성화")
 
     yield  # FastAPI 실행 유지
 
     # 6. 종료 작업
-    stop_scheduler()
+    if scheduler_started:
+        stop_scheduler()
     logger.info("🛑 서비스 종료: 정리 작업 완료")
 
 

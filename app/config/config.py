@@ -7,6 +7,7 @@
 import os
 import logging
 import json
+from pathlib import Path
 from dotenv import load_dotenv
 from pytz import timezone
 
@@ -43,6 +44,7 @@ console_handler.setFormatter(console_formatter)
 # 로거에 핸들러 추가
 logger.addHandler(console_handler)
 
+
 def database_url():
     """데이터베이스 URL을 반환하는 함수.
 
@@ -56,7 +58,9 @@ def database_url():
         if explicit_url.startswith("postgresql://"):
             return explicit_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         if explicit_url.startswith("postgresql+psycopg2://"):
-            return explicit_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+            return explicit_url.replace(
+                "postgresql+psycopg2://", "postgresql+asyncpg://", 1
+            )
         return explicit_url
 
     postgres_db = os.getenv("POSTGRES_DB", "meal_service")
@@ -68,6 +72,7 @@ def database_url():
         f"postgresql+asyncpg://{postgres_user}:{postgres_password}@"
         f"{postgres_host}:{postgres_port}/{postgres_db}"
     )
+
 
 class Config:
     """FastAPI 설정 값을 관리하는 클래스
@@ -89,6 +94,19 @@ class Config:
     CONFIG_DIR = CONFIG_DIR
     TMP_DIR = os.path.join(SERVICE_DIR, "tmp")
     RESTAURANT_DATA = os.path.join(CONFIG_DIR, "student_cafeteria.json")
+    MEAL_UPLOAD_ARCHIVE_DIR = Path(
+        os.getenv(
+            "MEAL_UPLOAD_ARCHIVE_DIR",
+            os.path.join(SERVICE_DIR, "data", "meal_uploads"),
+        )
+    )
+    MEAL_UPLOAD_MAX_BYTES = int(
+        os.getenv("MEAL_UPLOAD_MAX_BYTES", str(5 * 1024 * 1024))
+    )
+    MEAL_UPLOAD_PARSER_VERSION = "1"
+    MEAL_EXCEL_AUTO_SYNC_ENABLED = (
+        os.getenv("MEAL_EXCEL_AUTO_SYNC_ENABLED", "false").lower() == "true"
+    )
 
     USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://user-service:8000").rstrip(
         "/"

@@ -29,10 +29,19 @@ API 목록:
 """
 
 import datetime as dt
-from typing import Annotated, Optional
+import hashlib
+import io
+import json
+import shutil
+import tempfile
+import uuid
+import zipfile
+import zlib
+from pathlib import Path
+from typing import Annotated, Any, Optional
 
 from httpx import AsyncClient
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,11 +61,18 @@ from app.schemas.meals import (
     MealResponse,
     MealUpdate,
     MenuEdit,
+    MealExcelSyncRequest,
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
 from app.schemas.users import AdminUserSchema
-from app.services.crawler_service import download_and_save_excel_to_db
+from app.services.crawler_service import _sync_lock
+from app.services.excel_importer import (
+    E_RESTAURANT_ID,
+    TIP_RESTAURANT_ID,
+    ExcelMealImporter,
+    ParsedMeal,
+)
 from app.utils.http import get_async_client
 from app.utils.db import get_admin_user, get_current_user, get_db
 from app.utils.meals import (
@@ -73,6 +89,444 @@ from app.utils.meals import (
 from app.utils.restaurants import get_restaurant_with_permission
 
 router = APIRouter(prefix="/meals", tags=["Meals"])
+
+_MAX_XLSX_ENTRIES = 2000
+_MAX_XLSX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+_MAX_XLSX_COMPRESSION_RATIO = 100
+
+
+class _UploadAnalysisError(Exception):
+    """Safe, user-facing reason for an archived workbook analysis failure."""
+
+    def __init__(self, code: str, message: str) -> None:
+        """Store a stable error code and a non-sensitive explanation."""
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+
+def _safe_upload_filename(filename: str) -> str:
+    """Keep a display-only filename without path components or controls."""
+    name = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    normalized = "".join(character for character in name if character.isprintable())
+    return normalized[:255] or "menu.xlsx"
+
+
+def _validate_xlsx_archive(contents: bytes) -> None:
+    """Reject corrupt or oversized ZIP payloads before opening them in pandas."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(contents)) as workbook:
+            entries = workbook.infolist()
+            names = {entry.filename for entry in entries}
+            uncompressed_size = sum(entry.file_size for entry in entries)
+            if (
+                len(entries) > _MAX_XLSX_ENTRIES
+                or uncompressed_size > _MAX_XLSX_UNCOMPRESSED_BYTES
+                or uncompressed_size
+                > max(1, len(contents)) * _MAX_XLSX_COMPRESSION_RATIO
+                or "[Content_Types].xml" not in names
+                or "xl/workbook.xml" not in names
+                or workbook.testzip() is not None
+            ):
+                raise ValueError("invalid_xlsx_archive")
+    except (EOFError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error) as exc:
+        raise ValueError("invalid_xlsx_archive") from exc
+
+
+def _write_upload_result(path: Path, result: dict[str, Any]) -> None:
+    """Atomically replace the result sidecar without exposing partial JSON."""
+    temporary_path = path.with_suffix(".json.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _record_analysis_failure(
+    result_path: Path,
+    result: dict[str, Any],
+    *,
+    error_code: str,
+    error_message: str | None = None,
+) -> None:
+    """Record analysis failure without reclassifying the archived upload."""
+    result["status"] = "uploaded"
+    result["analysis_status"] = "failed"
+    result["analysis_error_code"] = error_code
+    if error_message:
+        result["analysis_error_message"] = error_message
+    try:
+        _write_upload_result(result_path, result)
+    except OSError:
+        logger.exception("[excel_upload] 결과 sidecar 기록에 실패했습니다.")
+
+
+def _upload_records() -> list[tuple[Path, dict[str, Any]]]:
+    """Read archived upload sidecars, newest upload first."""
+    archive_root = Config.MEAL_UPLOAD_ARCHIVE_DIR
+    if not archive_root.exists():
+        return []
+
+    records: list[tuple[Path, dict[str, Any]]] = []
+    for result_path in archive_root.glob("*/*/*/result.json"):
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(result, dict) or not result.get("upload_id"):
+            continue
+        if not result_path.with_name("original.xlsx").is_file():
+            continue
+        records.append((result_path, result))
+
+    def sort_key(record: tuple[Path, dict[str, Any]]) -> dt.datetime:
+        value = record[1].get("uploaded_at")
+        if isinstance(value, str):
+            try:
+                parsed = dt.datetime.fromisoformat(value)
+                return (
+                    parsed
+                    if parsed.tzinfo is not None
+                    else parsed.replace(tzinfo=Config.TZ)
+                )
+            except ValueError:
+                pass
+        return dt.datetime.min.replace(tzinfo=Config.TZ)
+
+    records.sort(key=sort_key, reverse=True)
+    return records
+
+
+def _upload_record(
+    upload_id: str | None,
+) -> tuple[Path, dict[str, Any]] | None:
+    """Resolve a selected upload, or the latest upload when omitted."""
+    records = _upload_records()
+    if upload_id is None:
+        return records[0] if records else None
+    normalized = upload_id.strip()
+    if not normalized:
+        return records[0] if records else None
+    return next(
+        (record for record in records if record[1].get("upload_id") == normalized),
+        None,
+    )
+
+
+def _public_upload_metadata(result: dict[str, Any], *, is_latest: bool) -> dict[str, Any]:
+    """Return sidecar fields safe and useful for the administrator file list."""
+    fields = {
+        "upload_id",
+        "status",
+        "upload_status",
+        "analysis_status",
+        "analysis_error_code",
+        "analysis_error_message",
+        "apply_status",
+        "apply_error_code",
+        "file_name",
+        "file_size",
+        "sha256",
+        "parser_version",
+        "uploaded_by",
+        "uploaded_at",
+        "period",
+        "summary",
+        "sync_status",
+        "sync_error_code",
+        "sync_error_message",
+        "synced_at",
+    }
+    metadata = {key: result[key] for key in fields if key in result}
+    metadata["is_latest"] = is_latest
+    return metadata
+
+
+def _record_sync_failure(
+    result_path: Path,
+    result: dict[str, Any],
+    *,
+    error_code: str,
+    error_message: str,
+    requested_at: str,
+) -> dict[str, Any]:
+    """Persist a detailed sync failure while retaining the original upload."""
+    failure = {
+        **result,
+        "sync_status": "failed",
+        "sync_error_code": error_code,
+        "sync_error_message": error_message,
+        "synced_at": requested_at,
+    }
+    try:
+        _write_upload_result(result_path, failure)
+    except OSError:
+        logger.exception("[excel_sync] 동기화 실패 결과 기록에 실패했습니다.")
+    return failure
+
+
+def _find_completed_upload(sha256: str) -> dict[str, Any] | None:
+    """Return an earlier successful result for an identical workbook/parser."""
+    archive_root = Config.MEAL_UPLOAD_ARCHIVE_DIR
+    if not archive_root.exists():
+        return None
+    for result_path in archive_root.glob("*/*/*/result.json"):
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(result, dict)
+            and result.get("status") == "completed"
+            and result.get("sha256") == sha256
+            and result.get("parser_version") == Config.MEAL_UPLOAD_PARSER_VERSION
+        ):
+            return result
+    return None
+
+
+def _build_upload_analysis(
+    parsed: list[ParsedMeal],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Serialize the existing parser result into the upload API contract."""
+    restaurant_names = {
+        TIP_RESTAURANT_ID: "TIP 가가식당",
+        E_RESTAURANT_ID: "E동 레스토랑",
+    }
+    meal_labels = {
+        "breakfast": "조식",
+        "brunch": "브런치",
+        "lunch": "중식",
+        "dinner": "석식",
+    }
+    ordered_meals = sorted(
+        parsed,
+        key=lambda meal: (meal.date, meal.restaurant_id, meal.meal_type),
+    )
+    restaurant_ids = {meal.restaurant_id for meal in ordered_meals}
+    return {
+        **metadata,
+        "status": "completed",
+        "analysis_status": "completed",
+        "period": {
+            "start_date": min(meal.date for meal in ordered_meals).isoformat(),
+            "end_date": max(meal.date for meal in ordered_meals).isoformat(),
+        },
+        "summary": {
+            "parsed": len(ordered_meals),
+            "reflected": len(ordered_meals),
+            "restaurants": len(restaurant_ids),
+        },
+        "items": [
+            {
+                "restaurant_id": meal.restaurant_id,
+                "restaurant": restaurant_names.get(
+                    meal.restaurant_id, f"식당 {meal.restaurant_id}"
+                ),
+                "meal_type": meal.meal_type,
+                "meal_type_label": meal_labels.get(meal.meal_type, meal.meal_type),
+                "date": meal.date.isoformat(),
+                "menu": meal.menu,
+            }
+            for meal in ordered_meals
+        ],
+    }
+
+
+def _store_upload_original(
+    archive_dir: Path,
+    metadata: dict[str, Any],
+    contents: bytes,
+) -> Path:
+    """Persist the original and initial processing sidecar before DB writes."""
+    archive_root = Config.MEAL_UPLOAD_ARCHIVE_DIR
+    original_path = archive_dir / "original.xlsx"
+    result_path = archive_dir / "result.json"
+    try:
+        archive_root.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(archive_root).free < len(contents) + 65536:
+            raise OSError("archive_space_unavailable")
+        archive_dir.mkdir(parents=True, exist_ok=False)
+        original_path.write_bytes(contents)
+        metadata["upload_status"] = "completed"
+        _write_upload_result(result_path, metadata)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=507,
+            detail="원본 파일을 보관할 저장 공간이 부족합니다.",
+        ) from exc
+    return result_path
+
+
+def _parse_upload_workbook(
+    contents: bytes,
+    result_path: Path,
+    metadata: dict[str, Any],
+    today: dt.date,
+) -> tuple[ExcelMealImporter | None, list[ParsedMeal]]:
+    """Analyze the workbook while keeping analysis failure separate from upload."""
+    try:
+        importer, parsed = _load_parsed_workbook(contents, today=today)
+    except _UploadAnalysisError as exc:
+        _record_analysis_failure(
+            result_path,
+            metadata,
+            error_code=exc.code,
+            error_message=exc.message,
+        )
+        logger.info("[excel_upload] 워크북 분석 실패: %s", exc.message)
+        return None, []
+    return importer, parsed
+
+
+def _load_parsed_workbook(
+    contents: bytes,
+    *,
+    today: dt.date,
+) -> tuple[ExcelMealImporter, list[ParsedMeal]]:
+    """Validate and parse workbook bytes with a stable detailed error reason."""
+    try:
+        _validate_xlsx_archive(contents)
+    except ValueError as exc:
+        raise _UploadAnalysisError(
+            "invalid_workbook",
+            "파일이 올바른 XLSX 구조가 아닙니다. Excel에서 다시 저장한 뒤 시도해주세요.",
+        ) from exc
+
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=".xlsx",
+            prefix="meal-upload-",
+            dir=Config.TMP_DIR,
+            delete=False,
+        ) as temporary_file:
+            temp_path = Path(temporary_file.name)
+            temporary_file.write(contents)
+        importer = ExcelMealImporter(str(temp_path))
+        parsed = importer.parse(today=today)
+    except Exception as exc:
+        reason = str(exc).strip()
+        if len(reason) > 300:
+            reason = f"{reason[:297]}..."
+        detail = "워크북 분석 중 오류가 발생했습니다."
+        if reason:
+            detail = f"{detail} ({type(exc).__name__}: {reason})"
+        raise _UploadAnalysisError("parser_error", detail) from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+    if not parsed:
+        raise _UploadAnalysisError(
+            "no_menus",
+            "날짜 헤더, TIP/E동 식당 블록 또는 메뉴 셀을 찾지 못했습니다.",
+        )
+    return importer, parsed
+
+
+async def _apply_uploaded_meals(
+    importer: ExcelMealImporter,
+    parsed: list[ParsedMeal],
+    db: AsyncSession,
+    result_path: Path,
+    metadata: dict[str, Any],
+) -> None:
+    """Apply one parsed workbook transaction and retain any apply failure."""
+    try:
+        await importer.insert_parsed_to_db(db, parsed)
+    except Exception as exc:
+        await db.rollback()
+        metadata["status"] = "uploaded"
+        metadata["apply_status"] = "failed"
+        metadata["apply_error_code"] = "excel_apply_failed"
+        try:
+            _write_upload_result(result_path, metadata)
+        except OSError:
+            logger.exception("[excel_upload] 반영 실패 결과 기록에 실패했습니다.")
+        logger.exception("[excel_upload] 메뉴 반영에 실패했습니다.")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "원본 파일은 업로드됐지만 메뉴 반영에 실패했습니다. "
+                "기존 메뉴는 변경되지 않았습니다."
+            ),
+        ) from exc
+
+
+@router.post("/excel", status_code=Config.HttpStatus.CREATED)
+async def upload_meal_excel(
+    file: Annotated[UploadFile, File()],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Archive, analyze, and immediately apply one weekly XLSX workbook."""
+    file_name = _safe_upload_filename(file.filename or "")
+    if not file_name.lower().endswith(".xlsx"):
+        raise HTTPException(
+            status_code=400, detail=".xlsx 파일만 업로드할 수 있습니다."
+        )
+
+    contents = await file.read(Config.MEAL_UPLOAD_MAX_BYTES + 1)
+    if len(contents) > Config.MEAL_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="파일 크기는 5MB 이하여야 합니다.")
+    if not contents:
+        raise HTTPException(status_code=400, detail="빈 파일은 업로드할 수 없습니다.")
+
+    sha256 = hashlib.sha256(contents).hexdigest()
+    async with _sync_lock:
+        duplicate = _find_completed_upload(sha256)
+        if duplicate is not None:
+            response.status_code = 200
+            return {"data": {**duplicate, "already_applied": True}}
+
+        uploaded_at = dt.datetime.now(tz=Config.TZ)
+        upload_id = str(uuid.uuid4())
+        metadata: dict[str, Any] = {
+            "upload_id": upload_id,
+            "status": "processing",
+            "analysis_status": "pending",
+            "file_name": file_name,
+            "file_size": len(contents),
+            "sha256": sha256,
+            "parser_version": Config.MEAL_UPLOAD_PARSER_VERSION,
+            "uploaded_by": current_user.user_id,
+            "uploaded_at": uploaded_at.isoformat(),
+        }
+        archive_dir = (
+            Config.MEAL_UPLOAD_ARCHIVE_DIR
+            / uploaded_at.strftime("%Y")
+            / uploaded_at.strftime("%m")
+            / upload_id
+        )
+        result_path = _store_upload_original(archive_dir, metadata, contents)
+        importer, parsed = _parse_upload_workbook(
+            contents,
+            result_path,
+            metadata,
+            uploaded_at.date(),
+        )
+        if importer is None or not parsed:
+            return {"data": metadata}
+
+        analysis = _build_upload_analysis(parsed, metadata)
+        metadata["analysis_status"] = "completed"
+        metadata["apply_status"] = "pending"
+        await _apply_uploaded_meals(importer, parsed, db, result_path, metadata)
+        analysis["apply_status"] = "completed"
+
+        try:
+            _write_upload_result(result_path, analysis)
+        except OSError:
+            logger.exception("[excel_upload] 완료 결과 sidecar 기록에 실패했습니다.")
+        return {"data": analysis}
 
 
 @router.get("", response_model=CustomPage[MealResponse])
@@ -489,31 +943,137 @@ async def delete_meal(
     logger.info("Meal %d successfully deleted by user %d", meal_id, current_user.id)
 
 
-@router.post("/meal_sync", status_code=Config.HttpStatus.NO_CONTENT)
+async def _sync_archived_upload(
+    db: AsyncSession,
+    *,
+    upload_id: str | None,
+    requested_by: str,
+) -> dict[str, Any]:
+    """Parse and apply the selected archived workbook with detailed outcome data."""
+    record = _upload_record(upload_id)
+    if record is None:
+        detail = (
+            "동기화할 업로드 파일이 없습니다."
+            if upload_id is None
+            else f"업로드 파일을 찾을 수 없습니다: {upload_id}"
+        )
+        raise HTTPException(status_code=404, detail=detail)
+
+    result_path, stored_result = record
+    requested_at = dt.datetime.now(tz=Config.TZ).isoformat()
+    source = "latest" if not upload_id or not upload_id.strip() else "selected"
+    base_result = {
+        **stored_result,
+        "sync_source": source,
+        "sync_requested_by": requested_by,
+        "sync_requested_at": requested_at,
+    }
+    original_path = result_path.with_name("original.xlsx")
+    try:
+        contents = original_path.read_bytes()
+    except OSError:
+        return _record_sync_failure(
+            result_path,
+            base_result,
+            error_code="original_file_unavailable",
+            error_message="보관된 원본 Excel 파일을 읽을 수 없습니다.",
+            requested_at=requested_at,
+        )
+
+    try:
+        importer, parsed = _load_parsed_workbook(
+            contents,
+            today=dt.datetime.now(tz=Config.TZ).date(),
+        )
+    except _UploadAnalysisError as exc:
+        return _record_sync_failure(
+            result_path,
+            base_result,
+            error_code=exc.code,
+            error_message=exc.message,
+            requested_at=requested_at,
+        )
+
+    try:
+        await importer.insert_parsed_to_db(db, parsed)
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("[excel_sync] 메뉴 반영에 실패했습니다.")
+        return _record_sync_failure(
+            result_path,
+            base_result,
+            error_code="excel_apply_failed",
+            error_message=(
+                "파일 분석은 완료했지만 DB 메뉴 반영에 실패했습니다. "
+                f"({type(exc).__name__})"
+            ),
+            requested_at=requested_at,
+        )
+
+    analysis = _build_upload_analysis(parsed, base_result)
+    analysis.update(
+        {
+            "sync_status": "completed",
+            "sync_error_code": None,
+            "sync_error_message": None,
+            "synced_at": dt.datetime.now(tz=Config.TZ).isoformat(),
+        }
+    )
+    try:
+        _write_upload_result(result_path, analysis)
+    except OSError:
+        logger.exception("[excel_sync] 완료 결과 sidecar 기록에 실패했습니다.")
+    return analysis
+
+
+@router.get("/excel/uploads")
+async def list_uploaded_meal_excels(
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
+) -> dict[str, Any]:
+    """관리자가 선택할 수 있는 보관 Excel 파일을 최신순으로 반환합니다."""
+    del current_user
+    records = _upload_records()
+    items = [
+        _public_upload_metadata(result, is_latest=index == 0)
+        for index, (_result_path, result) in enumerate(records)
+    ]
+    return {
+        "data": items,
+        "meta": {
+            "total": len(items),
+            "latest_upload_id": items[0].get("upload_id") if items else None,
+        },
+    }
+
+
+@router.post("/excel/sync")
+async def sync_uploaded_meal_excel(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
+    payload: MealExcelSyncRequest | None = None,
+) -> dict[str, Any]:
+    """최신 또는 선택한 보관 Excel 파일을 파싱하여 메뉴를 동기화합니다."""
+    async with _sync_lock:
+        result = await _sync_archived_upload(
+            db,
+            upload_id=payload.upload_id if payload else None,
+            requested_by=current_user.user_id,
+        )
+    return {"data": result}
+
+
+@router.post("/meal_sync")
 async def force_sync_meal(
     db: Annotated[AsyncSession, Depends(get_db)],
-    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
-):
-    """학식 정보를 강제로 동기화합니다.
-
-    이 함수는 학식 정보를 학교 사이트에서 다운로드하여 데이터베이스에 저장합니다.
-
-    Args:
-        db (AsyncSession): 요청 수명 동안 유지되는 데이터베이스 세션입니다.
-        client (AsyncClient): 인증 의존성에서 사용하는 HTTP 클라이언트입니다.
-        current_user (Annotated[AdminUserSchema, Depends]): 요청을 보낸 현재 사용자 객체입니다.
-
-    Raises:
-        HTTPException: 동기화 중 오류가 발생한 경우 발생합니다.
-    """
-    try:
-        logger.info("Force syncing meals...")
-        await download_and_save_excel_to_db(force=True)
-    except Exception as e:
-        logger.error("Error during meal sync: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"실패: {str(e)}") from e
-    logger.info("Meal sync completed successfully. requested by %s", current_user.id)
+    payload: MealExcelSyncRequest | None = None,
+) -> dict[str, Any]:
+    """기존 동기화 명령의 호환 경로로 최신 업로드 파일을 동기화합니다."""
+    return await sync_uploaded_meal_excel(
+        db,
+        current_user,
+        payload,
+    )
 
 
 @router.post("/{restaurant_id}", status_code=Config.HttpStatus.CREATED)
