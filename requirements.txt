@@ -360,6 +360,10 @@ python-keycloak==7.0.2 \
     --hash=sha256:0e90612f0ea57822376085426086fa636a874678b03e9676d06fb0da0bb2fe2a \
     --hash=sha256:37923f9f0c8dab67a3f3b92b5a78b639fd2461548918a8d9774bd0532fb09173
     # via sandol-meal-service
+python-multipart==0.0.29 \
+    --hash=sha256:2ddcc971cef266225f54f552d8fa10bcfbb1f14446caec199060daac59ff2d69 \
+    --hash=sha256:643e93849196645e2dbdd81a0f8829a23123ad7f797a84a364c6fb3563f18904
+    # via sandol-meal-service
 pytokens==0.3.0 \
     --hash=sha256:2f932b14ed08de5fcf0b391ace2642f858f1394c0857202959000b68ed7a458a \
     --hash=sha256:95b2b5eaf832e469d141a378872480ede3f251a5a5041b8ec6e581d3ac71bbf3

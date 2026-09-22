@@ -7,9 +7,12 @@ services:
       - .env
     environment:
       MEAL_TYPES_FILE_NAME: ${MEAL_TYPES_FILE_NAME:-meal_types.json}
+      MEAL_UPLOAD_ARCHIVE_DIR: /app/data/uploads
+      MEAL_EXCEL_AUTO_SYNC_ENABLED: "false"
     volumes:
       - ./app/config/student_cafeteria.json:/app/app/config/student_cafeteria.json:ro
       - ./app/config/meal_types.json:/app/app/config/meal_types.json:ro
+      - meal_upload_archive:/app/data/uploads
     ports:
       - "<호스트포트>:<컨테이너포트>"
     networks:
@@ -38,3 +41,4 @@ networks:
 
 volumes:
   db_data:
+  meal_upload_archive:

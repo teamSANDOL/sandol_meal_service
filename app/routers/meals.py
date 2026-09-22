@@ -29,10 +29,10 @@ API 목록:
 """
 
 import datetime as dt
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from httpx import AsyncClient
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,12 +52,21 @@ from app.schemas.meals import (
     MealResponse,
     MealUpdate,
     MenuEdit,
+    MealExcelSyncRequest,
 )
 from app.schemas.meals import MealType as MealTypeSchema
 from app.schemas.pagination import CustomPage
 from app.schemas.users import AdminUserSchema
-from app.services.crawler_service import download_and_save_excel_to_db
+from app.services.excel_upload_service import (
+    ExcelMealImporter,
+    sync_archived_upload,
+    sync_lock,
+    upload_records,
+    upload_workbook,
+    validate_xlsx_archive as _validate_xlsx_archive,
+)
 from app.utils.http import get_async_client
+from app.utils.excel_upload import public_upload_metadata, safe_upload_filename
 from app.utils.db import get_admin_user, get_current_user, get_db
 from app.utils.meals import (
     active_restaurant_meal_clause,
@@ -73,6 +82,29 @@ from app.utils.meals import (
 from app.utils.restaurants import get_restaurant_with_permission
 
 router = APIRouter(prefix="/meals", tags=["Meals"])
+
+@router.post("/excel", status_code=Config.HttpStatus.CREATED)
+async def upload_meal_excel(
+    file: Annotated[UploadFile, File()],
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Archive, analyze, and immediately apply one weekly XLSX workbook."""
+    file_name = safe_upload_filename(file.filename or "")
+    contents = await file.read(Config.MEAL_UPLOAD_MAX_BYTES + 1)
+    async with sync_lock():
+        result, already_applied = await upload_workbook(
+            contents,
+            file_name=file_name,
+            uploaded_by=current_user.user_id,
+            db=db,
+            importer_class=ExcelMealImporter,
+            archive_validator=_validate_xlsx_archive,
+        )
+    if already_applied:
+        response.status_code = 200
+    return result
 
 
 @router.get("", response_model=CustomPage[MealResponse])
@@ -489,31 +521,56 @@ async def delete_meal(
     logger.info("Meal %d successfully deleted by user %d", meal_id, current_user.id)
 
 
-@router.post("/meal_sync", status_code=Config.HttpStatus.NO_CONTENT)
+@router.get("/excel/uploads")
+async def list_uploaded_meal_excels(
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
+) -> dict[str, Any]:
+    """관리자가 선택할 수 있는 보관 Excel 파일을 최신순으로 반환합니다."""
+    del current_user
+    records = upload_records()
+    items = [
+        public_upload_metadata(result, is_latest=index == 0)
+        for index, (_result_path, result) in enumerate(records)
+    ]
+    return {
+        "data": items,
+        "meta": {
+            "total": len(items),
+            "latest_upload_id": items[0].get("upload_id") if items else None,
+        },
+    }
+
+
+@router.post("/excel/sync")
+async def sync_uploaded_meal_excel(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
+    payload: MealExcelSyncRequest | None = None,
+) -> dict[str, Any]:
+    """최신 또는 선택한 보관 Excel 파일을 파싱하여 메뉴를 동기화합니다."""
+    async with sync_lock():
+        result = await sync_archived_upload(
+            db,
+            upload_id=payload.upload_id if payload else None,
+            requested_by=current_user.user_id,
+            importer_class=ExcelMealImporter,
+            archive_validator=_validate_xlsx_archive,
+        )
+    return {"data": result}
+
+
+@router.post("/meal_sync")
 async def force_sync_meal(
     db: Annotated[AsyncSession, Depends(get_db)],
-    client: Annotated[AsyncClient, Depends(get_async_client)],
     current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
-):
-    """학식 정보를 강제로 동기화합니다.
-
-    이 함수는 학식 정보를 학교 사이트에서 다운로드하여 데이터베이스에 저장합니다.
-
-    Args:
-        db (AsyncSession): 요청 수명 동안 유지되는 데이터베이스 세션입니다.
-        client (AsyncClient): 인증 의존성에서 사용하는 HTTP 클라이언트입니다.
-        current_user (Annotated[AdminUserSchema, Depends]): 요청을 보낸 현재 사용자 객체입니다.
-
-    Raises:
-        HTTPException: 동기화 중 오류가 발생한 경우 발생합니다.
-    """
-    try:
-        logger.info("Force syncing meals...")
-        await download_and_save_excel_to_db(force=True)
-    except Exception as e:
-        logger.error("Error during meal sync: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"실패: {str(e)}") from e
-    logger.info("Meal sync completed successfully. requested by %s", current_user.id)
+    payload: MealExcelSyncRequest | None = None,
+) -> dict[str, Any]:
+    """기존 동기화 명령의 호환 경로로 최신 업로드 파일을 동기화합니다."""
+    return await sync_uploaded_meal_excel(
+        db,
+        current_user,
+        payload,
+    )
 
 
 @router.post("/{restaurant_id}", status_code=Config.HttpStatus.CREATED)

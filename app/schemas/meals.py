@@ -65,6 +65,12 @@ class MealUpdate(BaseMeal):
     restaurant_id: int
 
 
+class MealExcelSyncRequest(BaseModel):
+    """업로드 보관 파일을 메뉴 데이터로 동기화하는 요청입니다."""
+
+    upload_id: str | None = None
+
+
 class MealRegisterResponse(BaseModel):
     """식사 등록 응답 모델
 
