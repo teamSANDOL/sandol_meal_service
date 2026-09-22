@@ -101,7 +101,7 @@ class Config:
         )
     )
     MEAL_UPLOAD_MAX_BYTES = int(
-        os.getenv("MEAL_UPLOAD_MAX_BYTES", str(5 * 1024 * 1024))
+        os.getenv("MEAL_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024))
     )
     MEAL_UPLOAD_PARSER_VERSION = "1"
     MEAL_EXCEL_AUTO_SYNC_ENABLED = (
