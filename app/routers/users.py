@@ -2,6 +2,7 @@
 
 이 모듈은 사용자 생성, 조회, 목록 조회 및 삭제 기능을 제공합니다.
 사용자 정보는 외부 사용자 서비스에서 가져오며, SQLAlchemy를 사용하여 데이터베이스와 상호작용합니다.
+모든 엔드포인트는 관리자 권한(global_admin 또는 meal admin)을 가진 호출자만 접근할 수 있습니다.
 """
 
 from typing import Annotated
@@ -14,9 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.config import Config, logger
 from app.models.user import User
 from app.schemas.users import UserCreate, UserSchema
-from app.utils.db import get_db, get_user_by_id, create_user, delete_user
+from app.utils.db import (
+    get_admin_user,
+    get_db,
+    get_user_by_id,
+    create_user,
+    delete_user,
+)
 
-router = APIRouter(prefix="/users", tags=["User"])
+router = APIRouter(
+    prefix="/users", tags=["User"], dependencies=[Depends(get_admin_user)]
+)
 
 
 @router.post("/", response_model=UserSchema)
@@ -50,6 +59,7 @@ async def list_users(db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(User))
     users = result.scalars().all()
     return [UserSchema.model_validate(user) for user in users]
+
 
 @router.delete("/{user_id:str}", status_code=Config.HttpStatus.NO_CONTENT)
 async def remove_user(user_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
