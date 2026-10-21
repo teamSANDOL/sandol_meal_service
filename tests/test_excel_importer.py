@@ -9,6 +9,7 @@ from app.services.excel_importer import (
     E_RESTAURANT_ID,
     TIP_RESTAURANT_ID,
     ParsedMeal,
+    parse_header_dates,
     parse_weekly_menus,
 )
 from app.services.excel_upload_service import build_upload_analysis
@@ -81,14 +82,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _fixture_meals(name: str, today: dt.date) -> list[ParsedMeal]:
-    """Parse a real uploaded workbook kept under tests/fixtures.
-
-    실제 파일의 TIP 토요일 헤더는 오기('5일(토)', '3일(토)')라 날짜 검증에서
-    전체가 거부된다. 라벨 인식만 검증하려고 E동 헤더 값으로 바로잡는다.
-    """
+    """Parse a real uploaded workbook kept under tests/fixtures as-is."""
     df = pd.read_excel(FIXTURES / name, header=None)
-    e_header = int(df.index[df.iloc[:, 0].astype(str).str.contains("E동")][0]) + 1
-    df.iat[1, 6] = df.iat[e_header, 6]
     return parse_weekly_menus(df, today)
 
 
@@ -140,3 +135,23 @@ def test_upload_analysis_labels_breakfast() -> None:
         if item["meal_type"] == "breakfast"
     }
     assert labels == {"조식"}
+
+
+def test_typo_saturday_header_is_corrected() -> None:
+    """원본의 TIP 토요일 오기 헤더는 정확한 날짜로 보정되어 받아들여진다."""
+    sep = _fixture_meals("meal_2026_09.xlsx", dt.date(2026, 9, 14))
+    aug = _fixture_meals("meal_2026_08.xlsx", dt.date(2026, 8, 5))
+
+    def tip_dates(meals: list[ParsedMeal]) -> set[dt.date]:
+        return {m.date for m in meals if m.restaurant_id == TIP_RESTAURANT_ID}
+
+    assert dt.date(2026, 9, 19) in tip_dates(sep)
+    assert dt.date(2026, 8, 10) in tip_dates(aug)
+    assert sum(m.meal_type == "breakfast" for m in sep) == 6
+    assert sum(m.meal_type == "breakfast" for m in aug) == 6
+
+
+def test_header_rejected_without_majority() -> None:
+    """과반이 같은 주와 일치하지 않으면 거부한다."""
+    cells = ["8월", "5일", "9일", "3일", "20일"]
+    assert parse_header_dates(cells, dt.date(2026, 8, 5)) == {}

@@ -114,37 +114,60 @@ def _header_day(value: Any, expected: dt.date) -> bool:
     return bool(day_match and int(day_match.group(1)) == expected.day)
 
 
-def parse_header_dates(cells: list[Any], today: dt.date) -> dict[int, dt.date]:
-    """Convert a month/day header row into validated column dates."""
+def parse_header_dates(
+    cells: list[Any], today: dt.date, block: str = ""
+) -> dict[int, dt.date]:
+    """Convert a month/day header row into column dates.
+
+    날짜가 적힌 열 중 과반이 같은 주(첫 열 기준 연속 날짜)와 일치해야 하며,
+    일치하지 않는 헤더(오기)는 열 위치로 계산한 정확한 날짜로 보정한다.
+    과반이 일치하지 않으면 빈 dict를 반환해 파일을 거부한다.
+    """
     month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
     if not month_match:
         return {}
     header_month = int(month_match.group(1))
 
-    first_column: int | None = None
-    anchor: dt.date | None = None
+    candidates: list[tuple[int, dt.date]] = []
     for column, value in enumerate(cells[1:], start=1):
         text = _cell_text(value)
         day_match = re.search(r"(\d{1,2})\s*일", text)
         if not day_match:
             continue
         slash_match = _SLASH_DATE_RE.search(text)
-        first_month = int(slash_match.group(1)) if slash_match else header_month
-        first_day = int(day_match.group(1))
-        first_year = _nearest_year(first_month, first_day, today)
-        if first_year is None:
-            return {}
-        first_column = column
-        anchor = dt.date(first_year, first_month, first_day)
-        break
-    if first_column is None or anchor is None:
+        month = int(slash_match.group(1)) if slash_match else header_month
+        day = int(day_match.group(1))
+        year = _nearest_year(month, day, today)
+        if year is None:
+            continue
+        candidates.append((column, dt.date(year, month, day)))
+    if not candidates:
+        return {}
+
+    def matches(anchor: tuple[int, dt.date]) -> list[int]:
+        column0, date0 = anchor
+        return [
+            column
+            for column, date in candidates
+            if date == date0 + dt.timedelta(days=column - column0)
+        ]
+
+    best = max(candidates, key=lambda item: len(matches(item)))
+    matched = matches(best)
+    if len(matched) * 2 <= len(candidates):
         return {}
 
     dates: dict[int, dt.date] = {}
-    for column, value in enumerate(cells[1:], start=1):
-        expected = anchor + dt.timedelta(days=column - first_column)
-        if _header_day(value, expected):
-            dates[column] = expected
+    for column, _ in candidates:
+        expected = best[1] + dt.timedelta(days=column - best[0])
+        dates[column] = expected
+        if column not in matched:
+            logger.warning(
+                "[엑셀 파싱] 헤더 날짜 보정 (%s): '%s' -> %s",
+                block,
+                _cell_text(cells[column]),
+                expected,
+            )
     return dates
 
 
@@ -182,7 +205,9 @@ def _parse_block(
     )
     if header_row is None:
         return None
-    dates = parse_header_dates(df.iloc[header_row, :].tolist(), today)
+    dates = parse_header_dates(
+        df.iloc[header_row, :].tolist(), today, f"restaurant={restaurant_id}"
+    )
     if not dates:
         return None
 
