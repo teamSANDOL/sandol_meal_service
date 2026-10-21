@@ -155,3 +155,31 @@ def test_header_rejected_without_majority() -> None:
     """과반이 같은 주와 일치하지 않으면 거부한다."""
     cells = ["8월", "5일", "9일", "3일", "20일"]
     assert parse_header_dates(cells, dt.date(2026, 8, 5)) == {}
+
+
+def test_month_wrap_workbook_parses_aug31_to_sep5() -> None:
+    """월 경계 주(31일, 9/1일, 2일…)는 8/31~9/5로 파싱되고 보정되지 않는다."""
+    parsed = _fixture_meals("meal_2026_08_31.xlsx", dt.date(2026, 8, 31))
+
+    dates = sorted({m.date for m in parsed})
+    assert dates[0] == dt.date(2026, 8, 31)
+    assert dates[-1] == dt.date(2026, 9, 5)
+    assert len(dates) == 6
+    assert any(
+        m.meal_type == "breakfast" and m.restaurant_id == TIP_RESTAURANT_ID
+        for m in parsed
+    )
+
+
+def test_header_year_wrap() -> None:
+    """12월 말 뒤에 일(日)이 줄면 다음 해 1월로 넘어간다."""
+    cells = ["12월", "29일", "30일", "31일", "1일", "2일"]
+    dates = parse_header_dates(cells, dt.date(2026, 12, 29))
+    assert dates[4] == dt.date(2027, 1, 1)
+    assert dates[5] == dt.date(2027, 1, 2)
+
+
+def test_header_explicit_month_conflict_rejected() -> None:
+    """명시 월 표기와 충돌하는 오기는 보정하지 않고 거부한다."""
+    cells = ["8월", "28일", "29일", "9/20일", "31일", "9/1일"]
+    assert parse_header_dates(cells, dt.date(2026, 8, 28)) == {}

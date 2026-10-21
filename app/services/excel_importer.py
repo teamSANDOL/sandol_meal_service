@@ -19,6 +19,7 @@ from app.utils.meals import upsert_meal
 EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
+_MONTH_END_DAY = 28
 _TIME_ROW_RE = re.compile(r"^\d{1,2}:\d{2}")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
@@ -114,6 +115,46 @@ def _header_day(value: Any, expected: dt.date) -> bool:
     return bool(day_match and int(day_match.group(1)) == expected.day)
 
 
+def _resolve_header_candidates(
+    cells: list[Any], header_month: int, today: dt.date
+) -> list[tuple[int, dt.date]]:
+    """Resolve each dated header cell to a date, tracking month/year rollover.
+
+    'M/D' 표기는 그 월을 우선하고, 말일 뒤에 일(日)이 줄면 다음 달로 본다.
+    시트 상단의 '8월'은 시작 월 힌트일 뿐이다. 해석 불가면 빈 리스트.
+    """
+    candidates: list[tuple[int, dt.date]] = []
+    month = header_month
+    year: int | None = None
+    prev_day: int | None = None
+    for column, value in enumerate(cells[1:], start=1):
+        text = _cell_text(value)
+        day_match = re.search(r"(\d{1,2})\s*일", text)
+        if not day_match:
+            continue
+        day = int(day_match.group(1))
+        slash_match = _SLASH_DATE_RE.search(text)
+        if slash_match:
+            new_month = int(slash_match.group(1))
+        elif prev_day is not None and prev_day >= _MONTH_END_DAY and day < prev_day:
+            # 31 -> 1처럼 말일 뒤에 일(日)이 줄면 다음 달로 넘어간 것이다.
+            new_month = month % 12 + 1
+        else:
+            new_month = month
+        if year is None:
+            year = _nearest_year(new_month, day, today)
+            if year is None:
+                return []
+        elif new_month < month:
+            year += 1
+        month, prev_day = new_month, day
+        try:
+            candidates.append((column, dt.date(year, month, day)))
+        except ValueError:
+            return []
+    return candidates
+
+
 def parse_header_dates(
     cells: list[Any], today: dt.date, block: str = ""
 ) -> dict[int, dt.date]:
@@ -128,19 +169,7 @@ def parse_header_dates(
         return {}
     header_month = int(month_match.group(1))
 
-    candidates: list[tuple[int, dt.date]] = []
-    for column, value in enumerate(cells[1:], start=1):
-        text = _cell_text(value)
-        day_match = re.search(r"(\d{1,2})\s*일", text)
-        if not day_match:
-            continue
-        slash_match = _SLASH_DATE_RE.search(text)
-        month = int(slash_match.group(1)) if slash_match else header_month
-        day = int(day_match.group(1))
-        year = _nearest_year(month, day, today)
-        if year is None:
-            continue
-        candidates.append((column, dt.date(year, month, day)))
+    candidates = _resolve_header_candidates(cells, header_month, today)
     if not candidates:
         return {}
 
@@ -158,16 +187,24 @@ def parse_header_dates(
         return {}
 
     dates: dict[int, dt.date] = {}
-    for column, _ in candidates:
+    for column, resolved in candidates:
         expected = best[1] + dt.timedelta(days=column - best[0])
-        dates[column] = expected
         if column not in matched:
+            if (expected.year, expected.month) != (resolved.year, resolved.month):
+                logger.error(
+                    "[엑셀 파싱] 헤더 월 충돌로 거부 (%s): '%s' vs %s",
+                    block,
+                    _cell_text(cells[column]),
+                    expected,
+                )
+                return {}
             logger.warning(
                 "[엑셀 파싱] 헤더 날짜 보정 (%s): '%s' -> %s",
                 block,
                 _cell_text(cells[column]),
                 expected,
             )
+        dates[column] = expected
     return dates
 
 
