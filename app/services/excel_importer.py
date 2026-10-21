@@ -19,7 +19,8 @@ from app.utils.meals import upsert_meal
 EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
-MEAL_LABELS = ("조식", "중식", "석식")
+_MONTH_END_DAY = 28
+_TIME_ROW_RE = re.compile(r"^\d{1,2}:\d{2}")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
 
@@ -47,6 +48,30 @@ def _cell_text(value: Any) -> str:
     if value is None or pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def _meal_type(label: str) -> str | None:
+    """Map a first-column label to a meal type, ignoring whitespace/newlines.
+
+    '조식'으로 시작하거나 '아침'을 포함하면(예: '천원의 아침밥') 조식이다.
+    """
+    compact = re.sub(r"\s+", "", label)
+    if compact.startswith("조식") or "아침" in compact:
+        return "breakfast"
+    if compact.startswith("중식"):
+        return "lunch"
+    if compact.startswith("석식"):
+        return "dinner"
+    return None
+
+
+def _is_block_boundary(label: str) -> bool:
+    """Return True for a non-empty first cell that starts a new section.
+
+    '8:30~ 10:00'처럼 라벨 아래로 밀려난 시간 행은 경계가 아니다.
+    """
+    compact = re.sub(r"\s+", "", label)
+    return bool(compact) and not _TIME_ROW_RE.match(compact)
 
 
 def clean_menu(menu_list: list[Any]) -> list[str]:
@@ -90,37 +115,96 @@ def _header_day(value: Any, expected: dt.date) -> bool:
     return bool(day_match and int(day_match.group(1)) == expected.day)
 
 
-def parse_header_dates(cells: list[Any], today: dt.date) -> dict[int, dt.date]:
-    """Convert a month/day header row into validated column dates."""
-    month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
-    if not month_match:
-        return {}
-    header_month = int(month_match.group(1))
+def _resolve_header_candidates(
+    cells: list[Any], header_month: int, today: dt.date
+) -> list[tuple[int, dt.date]]:
+    """Resolve each dated header cell to a date, tracking month/year rollover.
 
-    first_column: int | None = None
-    anchor: dt.date | None = None
+    'M/D' 표기는 그 월을 우선하고, 말일 뒤에 일(日)이 줄면 다음 달로 본다.
+    시트 상단의 '8월'은 시작 월 힌트일 뿐이다. 해석 불가면 빈 리스트.
+    """
+    candidates: list[tuple[int, dt.date]] = []
+    month = header_month
+    year: int | None = None
+    prev_day: int | None = None
     for column, value in enumerate(cells[1:], start=1):
         text = _cell_text(value)
         day_match = re.search(r"(\d{1,2})\s*일", text)
         if not day_match:
             continue
+        day = int(day_match.group(1))
         slash_match = _SLASH_DATE_RE.search(text)
-        first_month = int(slash_match.group(1)) if slash_match else header_month
-        first_day = int(day_match.group(1))
-        first_year = _nearest_year(first_month, first_day, today)
-        if first_year is None:
-            return {}
-        first_column = column
-        anchor = dt.date(first_year, first_month, first_day)
-        break
-    if first_column is None or anchor is None:
+        if slash_match:
+            new_month = int(slash_match.group(1))
+        elif prev_day is not None and prev_day >= _MONTH_END_DAY and day < prev_day:
+            # 31 -> 1처럼 말일 뒤에 일(日)이 줄면 다음 달로 넘어간 것이다.
+            new_month = month % 12 + 1
+        else:
+            new_month = month
+        if year is None:
+            year = _nearest_year(new_month, day, today)
+            if year is None:
+                return []
+        elif new_month < month:
+            year += 1
+        month, prev_day = new_month, day
+        try:
+            candidates.append((column, dt.date(year, month, day)))
+        except ValueError:
+            return []
+    return candidates
+
+
+def parse_header_dates(
+    cells: list[Any], today: dt.date, block: str = ""
+) -> dict[int, dt.date]:
+    """Convert a month/day header row into column dates.
+
+    날짜가 적힌 열 중 과반이 같은 주(첫 열 기준 연속 날짜)와 일치해야 하며,
+    일치하지 않는 헤더(오기)는 열 위치로 계산한 정확한 날짜로 보정한다.
+    과반이 일치하지 않으면 빈 dict를 반환해 파일을 거부한다.
+    """
+    month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
+    if not month_match:
+        return {}
+    header_month = int(month_match.group(1))
+
+    candidates = _resolve_header_candidates(cells, header_month, today)
+    if not candidates:
+        return {}
+
+    def matches(anchor: tuple[int, dt.date]) -> list[int]:
+        column0, date0 = anchor
+        return [
+            column
+            for column, date in candidates
+            if date == date0 + dt.timedelta(days=column - column0)
+        ]
+
+    best = max(candidates, key=lambda item: len(matches(item)))
+    matched = matches(best)
+    if len(matched) * 2 <= len(candidates):
         return {}
 
     dates: dict[int, dt.date] = {}
-    for column, value in enumerate(cells[1:], start=1):
-        expected = anchor + dt.timedelta(days=column - first_column)
-        if _header_day(value, expected):
-            dates[column] = expected
+    for column, resolved in candidates:
+        expected = best[1] + dt.timedelta(days=column - best[0])
+        if column not in matched:
+            if (expected.year, expected.month) != (resolved.year, resolved.month):
+                logger.error(
+                    "[엑셀 파싱] 헤더 월 충돌로 거부 (%s): '%s' vs %s",
+                    block,
+                    _cell_text(cells[column]),
+                    expected,
+                )
+                return {}
+            logger.warning(
+                "[엑셀 파싱] 헤더 날짜 보정 (%s): '%s' -> %s",
+                block,
+                _cell_text(cells[column]),
+                expected,
+            )
+        dates[column] = expected
     return dates
 
 
@@ -158,29 +242,33 @@ def _parse_block(
     )
     if header_row is None:
         return None
-    dates = parse_header_dates(df.iloc[header_row, :].tolist(), today)
+    dates = parse_header_dates(
+        df.iloc[header_row, :].tolist(), today, f"restaurant={restaurant_id}"
+    )
     if not dates:
         return None
 
     label_rows = [
         row
         for row in range(header_row + 1, end)
-        if any(_cell_text(df.iloc[row, 0]).startswith(label) for label in MEAL_LABELS)
+        if _meal_type(_cell_text(df.iloc[row, 0])) is not None
     ]
     if not label_rows:
         return None
 
     parsed: list[ParsedMeal] = []
     for label_row in label_rows:
-        label_text = _cell_text(df.iloc[label_row, 0])
-        meal_label = next(
-            label for label in MEAL_LABELS if label_text.startswith(label)
-        )
+        meal_type = _meal_type(_cell_text(df.iloc[label_row, 0]))
+        if meal_type is None:
+            continue
         next_label_or_boundary = next(
-            (row for row in range(label_row + 1, end) if _cell_text(df.iloc[row, 0])),
+            (
+                row
+                for row in range(label_row + 1, end)
+                if _is_block_boundary(_cell_text(df.iloc[row, 0]))
+            ),
             end,
         )
-        meal_type = {"조식": "breakfast", "중식": "lunch", "석식": "dinner"}[meal_label]
         for column, meal_date in dates.items():
             menu = clean_menu(
                 df.iloc[label_row:next_label_or_boundary, column].tolist()
