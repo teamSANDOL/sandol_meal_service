@@ -1,10 +1,17 @@
 """Tests for workbook layout parsing."""
 
 import datetime as dt
+from pathlib import Path
 
 import pandas as pd
 
-from app.services.excel_importer import parse_weekly_menus
+from app.services.excel_importer import (
+    E_RESTAURANT_ID,
+    TIP_RESTAURANT_ID,
+    ParsedMeal,
+    parse_weekly_menus,
+)
+from app.services.excel_upload_service import build_upload_analysis
 
 
 def workbook() -> pd.DataFrame:
@@ -68,3 +75,68 @@ def test_parse_weekly_menus_rejects_failed_required_restaurant_block() -> None:
     parsed = parse_weekly_menus(frame, dt.date(2026, 8, 24))
 
     assert parsed == []
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _fixture_meals(name: str, today: dt.date) -> list[ParsedMeal]:
+    """Parse a real uploaded workbook kept under tests/fixtures.
+
+    실제 파일의 TIP 토요일 헤더는 오기('5일(토)', '3일(토)')라 날짜 검증에서
+    전체가 거부된다. 라벨 인식만 검증하려고 E동 헤더 값으로 바로잡는다.
+    """
+    df = pd.read_excel(FIXTURES / name, header=None)
+    e_header = int(df.index[df.iloc[:, 0].astype(str).str.contains("E동")][0]) + 1
+    df.iat[1, 6] = df.iat[e_header, 6]
+    return parse_weekly_menus(df, today)
+
+
+def test_september_workbook_parses_tip_breakfast() -> None:
+    """'천원의 아침밥' 라벨과 분리된 시간 행도 TIP 조식으로 인식한다."""
+    parsed = _fixture_meals("meal_2026_09.xlsx", dt.date(2026, 9, 14))
+
+    breakfast = [m for m in parsed if m.meal_type == "breakfast"]
+    assert {m.restaurant_id for m in breakfast} == {TIP_RESTAURANT_ID}
+    assert [m.date for m in breakfast][:3] == [
+        dt.date(2026, 9, 14),
+        dt.date(2026, 9, 15),
+        dt.date(2026, 9, 16),
+    ]
+    first = breakfast[0].menu
+    assert first == ["①코너", "고추참치덮밥", "②코너", "주먹밥/치킨텐더샐러드"]
+    for meal in breakfast:
+        assert not any("아침밥" in item or "10:00" in item for item in meal.menu)
+
+    lunch_menus = [m.menu for m in parsed if m.meal_type == "lunch"]
+    assert all("②코너" not in menu for menu in lunch_menus)
+    assert not any(
+        m.meal_type == "breakfast" and m.restaurant_id == E_RESTAURANT_ID
+        for m in parsed
+    )
+    assert not any("국내산" in item for m in parsed for item in m.menu)
+
+
+def test_august_workbook_result_is_unchanged() -> None:
+    """기존 '조식' 표기(8월 양식)는 조식·중식·석식이 그대로 파싱된다."""
+    parsed = _fixture_meals("meal_2026_08.xlsx", dt.date(2026, 8, 5))
+
+    kinds = {(m.restaurant_id, m.meal_type) for m in parsed}
+    assert (TIP_RESTAURANT_ID, "breakfast") in kinds
+    assert (TIP_RESTAURANT_ID, "lunch") in kinds
+    assert (E_RESTAURANT_ID, "dinner") in kinds
+    assert (E_RESTAURANT_ID, "breakfast") not in kinds
+
+
+def test_upload_analysis_labels_breakfast() -> None:
+    """업로드 분석 결과의 조식 항목 라벨은 '조식'이다."""
+    parsed = _fixture_meals("meal_2026_09.xlsx", dt.date(2026, 9, 14))
+
+    analysis = build_upload_analysis(parsed, {})
+
+    labels = {
+        item["meal_type_label"]
+        for item in analysis["items"]
+        if item["meal_type"] == "breakfast"
+    }
+    assert labels == {"조식"}

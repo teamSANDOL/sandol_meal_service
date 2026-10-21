@@ -19,7 +19,7 @@ from app.utils.meals import upsert_meal
 EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
-MEAL_LABELS = ("조식", "중식", "석식")
+_TIME_ROW_RE = re.compile(r"^\d{1,2}:\d{2}")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
 
@@ -47,6 +47,30 @@ def _cell_text(value: Any) -> str:
     if value is None or pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def _meal_type(label: str) -> str | None:
+    """Map a first-column label to a meal type, ignoring whitespace/newlines.
+
+    '조식'으로 시작하거나 '아침'을 포함하면(예: '천원의 아침밥') 조식이다.
+    """
+    compact = re.sub(r"\s+", "", label)
+    if compact.startswith("조식") or "아침" in compact:
+        return "breakfast"
+    if compact.startswith("중식"):
+        return "lunch"
+    if compact.startswith("석식"):
+        return "dinner"
+    return None
+
+
+def _is_block_boundary(label: str) -> bool:
+    """Return True for a non-empty first cell that starts a new section.
+
+    '8:30~ 10:00'처럼 라벨 아래로 밀려난 시간 행은 경계가 아니다.
+    """
+    compact = re.sub(r"\s+", "", label)
+    return bool(compact) and not _TIME_ROW_RE.match(compact)
 
 
 def clean_menu(menu_list: list[Any]) -> list[str]:
@@ -165,22 +189,24 @@ def _parse_block(
     label_rows = [
         row
         for row in range(header_row + 1, end)
-        if any(_cell_text(df.iloc[row, 0]).startswith(label) for label in MEAL_LABELS)
+        if _meal_type(_cell_text(df.iloc[row, 0])) is not None
     ]
     if not label_rows:
         return None
 
     parsed: list[ParsedMeal] = []
     for label_row in label_rows:
-        label_text = _cell_text(df.iloc[label_row, 0])
-        meal_label = next(
-            label for label in MEAL_LABELS if label_text.startswith(label)
-        )
+        meal_type = _meal_type(_cell_text(df.iloc[label_row, 0]))
+        if meal_type is None:
+            continue
         next_label_or_boundary = next(
-            (row for row in range(label_row + 1, end) if _cell_text(df.iloc[row, 0])),
+            (
+                row
+                for row in range(label_row + 1, end)
+                if _is_block_boundary(_cell_text(df.iloc[row, 0]))
+            ),
             end,
         )
-        meal_type = {"조식": "breakfast", "중식": "lunch", "석식": "dinner"}[meal_label]
         for column, meal_date in dates.items():
             menu = clean_menu(
                 df.iloc[label_row:next_label_or_boundary, column].tolist()
