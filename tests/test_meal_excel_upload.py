@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.routers.meals as meals_router
 from app.models.meals import Meal
 from app.models.user import User
+from app.schemas.users import AdminUserSchema
 from app.services.excel_importer import ParsedMeal
 from app.utils.db import get_admin_user, get_current_user, get_db
 
@@ -201,3 +202,68 @@ async def test_admin_sync_returns_detailed_parse_failure(
     assert data["sync_status"] == "failed"
     assert data["sync_error_code"] == "invalid_workbook"
     assert "올바른 XLSX 구조" in data["sync_error_message"]
+
+
+@pytest.mark.asyncio
+async def test_admin_can_download_archived_original(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The archived original is returned as-is with its upload filename."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "식단표", "2026-09-21T08:00:00+09:00")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/식단표/file")
+    assert response.status_code == 200
+    assert response.content == b"workbook"
+    assert "spreadsheetml" in response.headers["content-type"]
+    assert "attachment" in response.headers["content-disposition"]
+
+    missing = await meal_upload_api.get("/meals/excel/uploads/nope/file")
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_non_admin(
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A caller without global_admin or meal_admin gets 403, not the file."""
+    import app.utils.db as db_utils  # noqa: PLC0415
+
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "secret", "2026-09-21T08:00:00+09:00")
+    user = await db.scalar(select(User).where(User.user_id == "test-user"))
+    assert user is not None
+
+    async def current_user(_db: AsyncSession, _user_id: str) -> User:
+        return user
+
+    async def not_admin(_user: User) -> AdminUserSchema:
+        return AdminUserSchema(
+            id=user.id,
+            user_id=user.user_id,
+            created_at=user.created_at,
+            global_admin=False,
+            meal_admin=False,
+        )
+
+    monkeypatch.setattr(db_utils, "get_current_user", current_user)
+    monkeypatch.setattr(db_utils, "check_admin_user", not_admin)
+
+    async def override_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db
+
+    app = FastAPI()
+    app.include_router(meals_router.router)
+    app.dependency_overrides[get_db] = override_db
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            "/meals/excel/uploads/secret/file", headers={"X-User-ID": "test-user"}
+        )
+    assert response.status_code == 403
+    assert response.content != b"workbook"
