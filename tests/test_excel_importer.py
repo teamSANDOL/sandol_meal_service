@@ -9,6 +9,8 @@ from app.services.excel_importer import (
     E_RESTAURANT_ID,
     TIP_RESTAURANT_ID,
     ParsedMeal,
+    _is_block_boundary,
+    _meal_type,
     parse_header_dates,
     parse_weekly_menus,
 )
@@ -183,3 +185,34 @@ def test_header_explicit_month_conflict_rejected() -> None:
     """명시 월 표기와 충돌하는 오기는 보정하지 않고 거부한다."""
     cells = ["8월", "28일", "29일", "9/20일", "31일", "9/1일"]
     assert parse_header_dates(cells, dt.date(2026, 8, 28)) == {}
+
+
+def test_meal_type_breakfast_label_is_narrow() -> None:
+    """Only real breakfast labels match; notes merely containing '아침' do not."""
+    for label in ("천원의 아침밥", "천원의아침밥(8:30~10:00)", "아침", "아침식사"):
+        assert _meal_type(label) == "breakfast"
+    assert _meal_type("아침은 8시부터 운영") is None
+
+
+def test_is_block_boundary_time_rows() -> None:
+    """Time rows are not boundaries, but meal labels with times and notes are."""
+    for label in ("8:30~10:00", "(8:30~10:00)", "오전 8:30~10:00", ""):
+        assert not _is_block_boundary(label)
+    for label in ("중식 11:30~13:30", "중식", "**상기 식단은"):
+        assert _is_block_boundary(label)
+
+
+def test_parenthesized_time_row_does_not_cut_breakfast_menu() -> None:
+    """A '(8:30~10:00)' row under the label keeps later menu rows in the block."""
+    df = workbook()
+    df.iloc[3, 0] = "(8:30~10:00)"
+    df.iloc[3, 2] = "A2"
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    tip = next(
+        meal
+        for meal in parsed
+        if meal.restaurant_id == TIP_RESTAURANT_ID
+        and meal.meal_type == "breakfast"
+        and meal.date == dt.date(2026, 8, 25)
+    )
+    assert tip.menu == ["A", "A2"]

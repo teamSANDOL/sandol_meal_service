@@ -20,7 +20,8 @@ EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
 _MONTH_END_DAY = 28
-_TIME_ROW_RE = re.compile(r"^\d{1,2}:\d{2}")
+_TIME_RE = re.compile(r"\d{1,2}:\d{2}")
+_BREAKFAST_RE = re.compile(r"아침(밥|식사)?(?![가-힣])")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
 
@@ -53,10 +54,11 @@ def _cell_text(value: Any) -> str:
 def _meal_type(label: str) -> str | None:
     """Map a first-column label to a meal type, ignoring whitespace/newlines.
 
-    '조식'으로 시작하거나 '아침'을 포함하면(예: '천원의 아침밥') 조식이다.
+    '조식'으로 시작하거나 '아침', '아침밥', '아침식사'가 단어로 쓰이면
+    (예: '천원의 아침밥') 조식이다. '아침은 8시부터'처럼 뒤에 한글이 붙으면 아니다.
     """
     compact = re.sub(r"\s+", "", label)
-    if compact.startswith("조식") or "아침" in compact:
+    if compact.startswith("조식") or _BREAKFAST_RE.search(compact):
         return "breakfast"
     if compact.startswith("중식"):
         return "lunch"
@@ -68,10 +70,13 @@ def _meal_type(label: str) -> str | None:
 def _is_block_boundary(label: str) -> bool:
     """Return True for a non-empty first cell that starts a new section.
 
-    '8:30~ 10:00'처럼 라벨 아래로 밀려난 시간 행은 경계가 아니다.
+    끼니 라벨은 시간이 붙어 있어도('중식 11:30~13:30') 경계이고, 라벨 아래로
+    밀려난 시간 행('8:30~ 10:00', '(8:30~10:00)', '오전 8:30~10:00')은 아니다.
     """
     compact = re.sub(r"\s+", "", label)
-    return bool(compact) and not _TIME_ROW_RE.match(compact)
+    if not compact:
+        return False
+    return _meal_type(label) is not None or not _TIME_RE.search(compact)
 
 
 def clean_menu(menu_list: list[Any]) -> list[str]:
@@ -98,21 +103,6 @@ def _nearest_year(month: int, day: int, today: dt.date) -> int | None:
     if not candidates:
         return None
     return min(candidates, key=lambda value: abs(value - today)).year
-
-
-def _header_day(value: Any, expected: dt.date) -> bool:
-    """Check a day header against the date inferred from the first column."""
-    text = _cell_text(value)
-    if not text:
-        return False
-    slash_match = _SLASH_DATE_RE.search(text)
-    if slash_match:
-        return (
-            int(slash_match.group(1)) == expected.month
-            and int(slash_match.group(2)) == expected.day
-        )
-    day_match = re.search(r"(\d{1,2})\s*일", text)
-    return bool(day_match and int(day_match.group(1)) == expected.day)
 
 
 def _resolve_header_candidates(
