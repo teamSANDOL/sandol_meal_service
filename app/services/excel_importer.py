@@ -21,6 +21,7 @@ TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
 _MONTH_END_DAY = 28
 _TIME_ONLY_RE = re.compile(r"\d{1,2}:\d{2}|오전|오후|[()~\-:.]")
+_WEEKDAY_RE = re.compile(r"일\s*\(?\s*[월화수목금토일]")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
 
@@ -59,9 +60,9 @@ def _meal_type(label: str) -> str | None:
     compact = re.sub(r"\s+", "", label)
     if compact.startswith("조식") or "아침" in compact:
         return "breakfast"
-    if compact.startswith("중식") or "점심" in compact:
+    if compact.startswith("중식"):
         return "lunch"
-    if compact.startswith("석식") or "저녁" in compact:
+    if compact.startswith("석식"):
         return "dinner"
     return None
 
@@ -149,66 +150,44 @@ def parse_header_dates(
 ) -> dict[int, dt.date]:
     """Convert a month/day header row into column dates.
 
-    날짜가 적힌 열 중 과반이 같은 주(첫 열 기준 연속 날짜)와 일치해야 하며,
-    일치하지 않는 헤더는 같은 주 안에서 순서가 맞으면(빈 날) 그대로 쓰고,
-    아니면(오기) 열 위치로 계산한 날짜로 보정한다. 최종 날짜는 엄격 증가해야 한다.
-    과반이 일치하지 않으면 빈 dict를 반환해 파일을 거부한다.
+    해석한 날짜를 왼쪽에서 오른쪽으로 그대로 쓰되, 빠진 열(빈 날)은 허용한다.
+    같은 날짜 중복 같은 오기는 양옆 날짜 사이의 하루일 때만 보정하고,
+    순서가 뒤집혔거나 보정할 수 없거나 한 주(6일)를 넘으면 빈 dict로 거부한다.
     """
     month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
     if not month_match:
         return {}
-    header_month = int(month_match.group(1))
-
-    candidates = _resolve_header_candidates(cells, header_month, today)
+    candidates = _resolve_header_candidates(cells, int(month_match.group(1)), today)
     if not candidates:
         return {}
 
-    def matches(anchor: tuple[int, dt.date]) -> list[int]:
-        column0, date0 = anchor
-        return [
-            column
-            for column, date in candidates
-            if date == date0 + dt.timedelta(days=column - column0)
-        ]
-
-    best = max(candidates, key=lambda item: len(matches(item)))
-    matched = matches(best)
-    if len(matched) * 2 <= len(candidates):
-        return {}
-
-    week_start = best[1] + dt.timedelta(days=candidates[0][0] - best[0])
-    week_end = week_start + dt.timedelta(days=6)
     dates: dict[int, dt.date] = {}
+    previous: dt.date | None = None
     for index, (column, resolved) in enumerate(candidates):
-        if column not in matched:
-            expected = best[1] + dt.timedelta(days=column - best[0])
-            previous = max(dates.values(), default=dt.date.min)
-            upcoming = (
-                candidates[index + 1][1] if index + 1 < len(candidates) else dt.date.max
-            )
-            if previous < resolved < upcoming and week_start <= resolved <= week_end:
-                # 빈 날이 있는 주(예: 24일 열 없음)는 해석한 날짜를 그대로 쓴다.
-                dates[column] = resolved
-                continue
-            if (expected.year, expected.month) != (resolved.year, resolved.month):
-                logger.error(
-                    "[엑셀 파싱] 헤더 월 충돌로 거부 (%s): '%s' vs %s",
-                    block,
-                    _cell_text(cells[column]),
-                    expected,
-                )
+        upcoming = candidates[index + 1][1] if index + 1 < len(candidates) else None
+        text = _cell_text(cells[column])
+        next_is_last_typo = index + 2 == len(candidates) and bool(
+            _WEEKDAY_RE.search(_cell_text(cells[candidates[-1][0]]))
+        )
+        if upcoming is not None and resolved > upcoming and not next_is_last_typo:
+            logger.error("[엑셀 파싱] 헤더 순서 뒤집힘 거부 (%s): '%s'", block, text)
+            return {}
+        final = resolved
+        if previous is not None and resolved <= previous:
+            # 요일 표기는 달력과 어긋나는 양식이 있어 날짜 계산에 쓰지 않고,
+            # 마지막 열이 오기임을 알려 주는 표식으로만 쓴다.
+            is_last_with_weekday = upcoming is None and bool(_WEEKDAY_RE.search(text))
+            is_gap_between = upcoming == previous + dt.timedelta(days=2)
+            if not (is_last_with_weekday or is_gap_between):
+                logger.error("[엑셀 파싱] 헤더 중복 거부 (%s): '%s'", block, text)
                 return {}
+            final = previous + dt.timedelta(days=1)
             logger.warning(
-                "[엑셀 파싱] 헤더 날짜 보정 (%s): '%s' -> %s",
-                block,
-                _cell_text(cells[column]),
-                expected,
+                "[엑셀 파싱] 헤더 날짜 보정 (%s): '%s' -> %s", block, text, final
             )
-            dates[column] = expected
-        else:
-            dates[column] = resolved
-    values = list(dates.values())
-    if values != sorted(set(values)):
+        dates[column] = previous = final
+    if previous - candidates[0][1] > dt.timedelta(days=6):
+        logger.error("[엑셀 파싱] 헤더가 한 주를 넘어 거부 (%s)", block)
         return {}
     return dates
 
@@ -270,7 +249,9 @@ def _parse_block(
         if kind is not None
         and (kind != "breakfast" or (row == first_breakfast < first_later_meal))
     ]
-    if not labels:
+    kinds = [kind for _, kind in labels]
+    if not labels or len(set(kinds)) != len(kinds):
+        # 같은 끼니 라벨이 두 번이면 뒤의 것이 앞의 것을 덮어쓰므로 거부한다.
         return None
 
     parsed: list[ParsedMeal] = []

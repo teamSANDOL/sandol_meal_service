@@ -4,6 +4,7 @@ import datetime as dt
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from app.services.excel_importer import (
     E_RESTAURANT_ID,
@@ -242,20 +243,29 @@ def test_header_missing_column_keeps_resolved_dates() -> None:
     }
 
 
-def test_header_reversed_order_is_not_trusted() -> None:
-    """순서가 뒤집힌 열은 해석값을 쓰지 않고 열 위치로 보정해 증가를 유지한다."""
+def test_header_reversed_order_rejected() -> None:
+    """순서가 뒤집힌 헤더는 보정하지 않고 거부한다."""
     cells = ["9월", "21일", "22일", "23일", "26일", "25일"]
+    assert parse_header_dates(cells, dt.date(2026, 9, 21)) == {}
+
+
+def test_header_missing_leading_column_keeps_dates() -> None:
+    """주 앞쪽에 빠진 열이 있어도 해석한 날짜를 그대로 쓴다."""
+    cells = ["9월", "21일", "22일", "24일", "25일", "26일"]
     dates = parse_header_dates(cells, dt.date(2026, 9, 21))
-    assert dates[4] == dt.date(2026, 9, 24)
-    assert dates[5] == dt.date(2026, 9, 25)
+    assert list(dates.values()) == [dt.date(2026, 9, d) for d in (21, 22, 24, 25, 26)]
+    wrap = parse_header_dates(
+        ["9월", "28일", "29일", "1일", "2일", "3일"], dt.date(2026, 9, 28)
+    )
+    assert wrap[3] == dt.date(2026, 10, 1)
+    assert wrap[5] == dt.date(2026, 10, 3)
 
 
-def test_unfamiliar_timed_label_is_boundary_and_lunch_label() -> None:
-    """시간이 붙은 낯선 끼니 라벨은 경계이고, 점심/저녁은 끼니로 인식한다."""
+def test_unfamiliar_timed_label_is_boundary() -> None:
+    """시간이 붙은 낯선 끼니 라벨은 경계이고 끼니로는 인식하지 않는다."""
     assert _is_block_boundary("천원의 저녁밥 17:00~18:50")
     assert not _is_block_boundary("8:30~ 10:00")
-    assert _meal_type("점심 11:00~14:00") == "lunch"
-    assert _meal_type("천원의 저녁밥 17:00~18:50") == "dinner"
+    assert _meal_type("※ 점심 메뉴는 변경될 수 있음") is None
 
 
 def test_second_breakfast_label_is_not_a_label() -> None:
@@ -271,3 +281,191 @@ def test_second_breakfast_label_is_not_a_label() -> None:
     ]
     assert len(tip) == 6
     assert next(m for m in tip if m.date == dt.date(2026, 8, 25)).menu == ["A"]
+
+
+def _d(*pairs: tuple[int, int, int]) -> list[dt.date]:
+    return [dt.date(*pair) for pair in pairs]
+
+
+_W = dt.date(2026, 9, 21)
+HEADER_CASES = [
+    # (헤더 월, 날짜 셀, today, 기대 날짜 목록 또는 None=거부)
+    (
+        "9월",
+        ["21일", "22일", "24일", "25일", "26일"],
+        _W,
+        _d((2026, 9, 21), (2026, 9, 22), (2026, 9, 24), (2026, 9, 25), (2026, 9, 26)),
+    ),
+    (
+        "9월",
+        ["21일", "23일", "24일", "25일", "26일"],
+        _W,
+        _d((2026, 9, 21), (2026, 9, 23), (2026, 9, 24), (2026, 9, 25), (2026, 9, 26)),
+    ),
+    (
+        "9월",
+        ["28일", "29일", "1일", "2일", "3일"],
+        dt.date(2026, 9, 28),
+        _d((2026, 9, 28), (2026, 9, 29), (2026, 10, 1), (2026, 10, 2), (2026, 10, 3)),
+    ),
+    (
+        "9월",
+        ["30일", "1일", "2일", "3일"],
+        dt.date(2026, 9, 30),
+        _d((2026, 9, 30), (2026, 10, 1), (2026, 10, 2), (2026, 10, 3)),
+    ),
+    (
+        "10월",
+        ["31일", "2일", "3일", "4일"],
+        dt.date(2026, 10, 31),
+        _d((2026, 10, 31), (2026, 11, 2), (2026, 11, 3), (2026, 11, 4)),
+    ),
+    (
+        "12월",
+        ["29일", "30일", "31일", "1일", "2일"],
+        dt.date(2026, 12, 29),
+        _d((2026, 12, 29), (2026, 12, 30), (2026, 12, 31), (2027, 1, 1), (2027, 1, 2)),
+    ),
+    (
+        "12월",
+        ["29일", "30일", "31일", "1일", "2일"],
+        dt.date(2027, 1, 2),
+        _d((2026, 12, 29), (2026, 12, 30), (2026, 12, 31), (2027, 1, 1), (2027, 1, 2)),
+    ),
+    (
+        "2월",
+        ["28일", "29일", "1일"],
+        dt.date(2028, 2, 28),
+        _d((2028, 2, 28), (2028, 2, 29), (2028, 3, 1)),
+    ),
+    ("2월", ["28일", "29일", "1일"], dt.date(2026, 2, 28), None),
+    ("9월", ["26일", "22일", "23일", "24일"], _W, None),
+    ("9월", ["21일", "21일", "21일", "24일"], _W, None),
+    ("9월", ["21일"], _W, _d((2026, 9, 21))),
+    ("9월", ["", "메뉴"], _W, None),
+    (
+        "9월",
+        [f"{day}일" for day in range(21, 28)],
+        _W,
+        _d(*[(2026, 9, day) for day in range(21, 28)]),
+    ),
+    ("9월", [f"{day}일" for day in range(21, 29)], _W, None),
+    (
+        "9월",
+        ["21일", "21일(화)", "23일"],
+        _W,
+        _d((2026, 9, 21), (2026, 9, 22), (2026, 9, 23)),
+    ),
+    ("9월", ["21일", "21일(월)", "25일"], _W, None),
+    (
+        "9월",
+        ["21일", "22일", "23일", "23일(수)"],
+        _W,
+        _d((2026, 9, 21), (2026, 9, 22), (2026, 9, 23), (2026, 9, 24)),
+    ),
+    ("9월", ["23일", "25일", "25일"], _W, None),
+    (
+        "9월",
+        ["24일", "25일", "26일", "26일", "28일", "29일"],
+        _W,
+        _d(
+            (2026, 9, 24),
+            (2026, 9, 25),
+            (2026, 9, 26),
+            (2026, 9, 27),
+            (2026, 9, 28),
+            (2026, 9, 29),
+        ),
+    ),
+    ("9월", ["9/1일", "2일"], dt.date(2026, 9, 1), _d((2026, 9, 1), (2026, 9, 2))),
+    ("9월", ["10 일", "11 일"], dt.date(2026, 9, 10), _d((2026, 9, 10), (2026, 9, 11))),
+    (
+        "9월",
+        ["14일\n(월)", "15일\n(화)"],
+        dt.date(2026, 9, 14),
+        _d((2026, 9, 14), (2026, 9, 15)),
+    ),
+    (
+        "9월",
+        [" 14일 ", " 15일 "],
+        dt.date(2026, 9, 14),
+        _d((2026, 9, 14), (2026, 9, 15)),
+    ),
+]
+
+
+@pytest.mark.parametrize(("month", "cells", "today", "expected"), HEADER_CASES)
+def test_header_boundary_cases(
+    month: str, cells: list[str], today: dt.date, expected: list[dt.date] | None
+) -> None:
+    """월·연·윤년 경계, 빠진 열, 오기, 표기 변형을 표로 검증한다."""
+    dates = parse_header_dates([month, *cells], today)
+    assert list(dates.values()) == (expected or [])
+
+
+@pytest.mark.parametrize("label", ["조 식", "조식\n8:30~10:00", "천원의\n아침밥"])
+def test_breakfast_label_variants(label: str) -> None:
+    """공백·시간이 붙은 조식 라벨도 TIP 조식 6일치로 인식한다."""
+    df = workbook()
+    df.iloc[2, 0] = label
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    tip = [m for m in parsed if m.restaurant_id == 1 and m.meal_type == "breakfast"]
+    assert len(tip) == 6
+    assert tip[0].menu == ["미운영"]
+
+
+@pytest.mark.parametrize(
+    "time_row",
+    ["08:30~10:00", "8:30-10:00", "(8:30~10:00)", "오전 8:30 ~ 10:00"],
+)
+def test_time_row_variants_keep_menu(time_row: str) -> None:
+    """시간 행 표기가 달라도 조식 블록을 끊지 않는다."""
+    df = workbook()
+    df.iloc[3, 0] = time_row
+    df.iloc[3, 2] = "A2"
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    tip = next(
+        m
+        for m in parsed
+        if m.restaurant_id == 1
+        and m.meal_type == "breakfast"
+        and m.date == dt.date(2026, 8, 25)
+    )
+    assert tip.menu == ["A", "A2"]
+
+
+@pytest.mark.parametrize(
+    "note", ["※ 점심 메뉴는 변경될 수 있음", "※ 석식은 변경될 수 있음", "*복수메뉴*"]
+)
+def test_first_column_notes_do_not_become_meals(note: str) -> None:
+    """A열 주석 행은 끼니가 되지 않고 석식 블록만 끝낸다."""
+    df = workbook()
+    df.iloc[6, 0] = note
+    df.iloc[6, 1] = "note"
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    tip = [m for m in parsed if m.restaurant_id == 1]
+    assert next(m for m in tip if m.meal_type == "dinner").menu == ["TIP 저"]
+    assert next(m for m in tip if m.meal_type == "lunch").menu == ["TIP 월"]
+    assert len(tip) == 18
+
+
+def test_breakfast_only_block() -> None:
+    """조식만 있는 TIP 블록도 조식만 파싱한다."""
+    df = workbook()
+    df.iloc[4:6, :] = ""
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    assert {m.meal_type for m in parsed if m.restaurant_id == 1} == {"breakfast"}
+
+
+def test_duplicate_meal_label_rejects_block() -> None:
+    """같은 끼니 라벨이 두 번이면 덮어쓰기 대신 파일 전체를 거부한다."""
+    df = workbook()
+    df.iloc[5, 0] = "중식"
+    assert parse_weekly_menus(df, dt.date(2026, 8, 24)) == []
+
+
+def test_mismatched_restaurant_dates_reject_workbook() -> None:
+    """TIP과 E동의 날짜 집합이 다르면 파일 전체를 거부한다."""
+    df = workbook()
+    df.iloc[8, 6] = "30일"
+    assert parse_weekly_menus(df, dt.date(2026, 8, 24)) == []
