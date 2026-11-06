@@ -1,5 +1,6 @@
 """Tests for archiving Excel uploads independently from their analysis."""
 
+import hashlib
 import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -352,3 +353,177 @@ async def test_download_blank_id_returns_404_not_latest(
 
     response = await meal_upload_api.get("/meals/excel/uploads/%20/file")
     assert response.status_code == 404
+
+
+def _write_custom_upload(
+    root: Path,
+    folder: str,
+    record: object,
+    content: bytes = b"workbook",
+    *,
+    year: str = "2026",
+) -> Path:
+    """Write an archive folder with an arbitrary result.json payload."""
+    archive_dir = root / year / "09" / folder
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "original.xlsx").write_bytes(content)
+    text = record if isinstance(record, str) else json.dumps(record)
+    (archive_dir / "result.json").write_text(text, encoding="utf-8")
+    return archive_dir
+
+
+def _record(upload_id: str, **extra: object) -> dict[str, object]:
+    """Build a minimal valid result record."""
+    return {
+        "upload_id": upload_id,
+        "file_name": f"{upload_id}.xlsx",
+        "uploaded_at": "2026-09-21T08:00:00+09:00",
+        **extra,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "..%2F..%2Fx",
+        "%2e%2e",
+        "2026",
+        "09",
+        "real-upl",
+        "pload",
+        "a" * 5000,
+        "%09",
+        "%20%20",
+        "%0A",
+    ],
+)
+async def test_download_rejects_unknown_or_malformed_ids(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    bad_id: str,
+) -> None:
+    """Path tricks, partial ids and blank ids never serve any file."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_custom_upload(tmp_path, "real-upload", _record("real-upload"), b"SECRET")
+
+    response = await meal_upload_api.get(f"/meals/excel/uploads/{bad_id}/file")
+    assert response.status_code == 404
+    assert b"SECRET" not in response.content
+
+
+@pytest.mark.asyncio
+async def test_download_skips_broken_and_non_dict_records(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Corrupt sidecars do not break downloading of healthy uploads."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_custom_upload(tmp_path, "broken", "{not json")
+    _write_custom_upload(tmp_path, "listy", ["upload_id", "x"])
+    _write_custom_upload(tmp_path, "noid", {"file_name": "x.xlsx"})
+    _write_custom_upload(tmp_path, "good", _record("good"), b"good-bytes")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/good/file")
+    assert response.status_code == 200
+    assert response.content == b"good-bytes"
+
+
+@pytest.mark.asyncio
+async def test_download_duplicate_upload_id_serves_newest_matching_pair(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """With a duplicated id the newest record wins, with its own original."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    old = _record("dup", uploaded_at="2026-09-20T08:00:00+09:00")
+    new = _record("dup", uploaded_at="2026-09-22T08:00:00+09:00")
+    _write_custom_upload(tmp_path, "dup", old, b"OLD", year="2025")
+    _write_custom_upload(tmp_path, "dup", new, b"NEW")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/dup/file")
+    assert response.status_code == 200
+    assert response.content == b"NEW"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("file_name", "expected"),
+    [
+        ("식단표.xlsx", "filename*=utf-8''%EC%8B%9D%EB%8B%A8%ED%91%9C.xlsx"),
+        ("my menu.xlsx", "filename*=utf-8''my%20menu.xlsx"),
+        ('we"ird.xlsx', "filename*=utf-8''we%22ird.xlsx"),
+        ("../../etc/passwd.xlsx", 'filename="passwd.xlsx"'),
+        ("C:\\dir\\sheet.xlsx", 'filename="sheet.xlsx"'),
+        ("UPPER.XLSX", 'filename="UPPER.XLSX"'),
+        (
+            "evil\r\nX-Injected: 1.xlsx",
+            "filename*=utf-8''evilX-Injected%3A%201.xlsx",
+        ),
+        ("", 'filename="menu.xlsx"'),
+        (None, 'filename="menu.xlsx"'),
+    ],
+)
+async def test_download_content_disposition_is_safe(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    file_name: str | None,
+    expected: str,
+) -> None:
+    """File names are sanitised and cannot inject headers or paths."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    record = _record("fn")
+    record["file_name"] = file_name
+    _write_custom_upload(tmp_path, "fn", record)
+
+    response = await meal_upload_api.get("/meals/excel/uploads/fn/file")
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment")
+    assert "\r" not in disposition and "\n" not in disposition
+    assert "x-injected" not in response.headers
+    assert "/" not in disposition.split("filename", maxsplit=1)[1]
+    assert expected in disposition, disposition
+
+
+@pytest.mark.asyncio
+async def test_download_body_and_media_type_match_original(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Binary content is returned byte for byte with the xlsx media type."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    payload = bytes(range(256)) * 64
+    _write_custom_upload(tmp_path, "bin", _record("bin"), payload)
+
+    response = await meal_upload_api.get("/meals/excel/uploads/bin/file")
+    assert response.status_code == 200
+    assert hashlib.sha256(response.content).hexdigest() == (
+        hashlib.sha256(payload).hexdigest()
+    )
+    assert response.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("analysis_status", ["failed", "pending", "completed"])
+async def test_download_works_regardless_of_analysis_status(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    analysis_status: str,
+) -> None:
+    """The archived original is downloadable whatever the analysis outcome."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    record = _record("an", analysis_status=analysis_status, status="uploaded")
+    _write_custom_upload(tmp_path, "an", record, b"orig")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/an/file")
+    assert response.status_code == 200
+    assert response.content == b"orig"
