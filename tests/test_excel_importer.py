@@ -227,3 +227,47 @@ def test_breakfast_note_below_dinner_is_not_a_label() -> None:
     assert len([m for m in tip if m.meal_type == "breakfast"]) == 6
     dinner = next(m for m in tip if m.meal_type == "dinner")
     assert dinner.menu == ["TIP 저"]
+
+
+def test_header_missing_column_keeps_resolved_dates() -> None:
+    """빠진 날짜 열(24일) 뒤의 25·26일은 보정 없이 그대로 쓴다."""
+    cells = ["9월", "21일", "22일", "23일", "25일", "26일"]
+    dates = parse_header_dates(cells, dt.date(2026, 9, 21))
+    assert dates == {
+        1: dt.date(2026, 9, 21),
+        2: dt.date(2026, 9, 22),
+        3: dt.date(2026, 9, 23),
+        4: dt.date(2026, 9, 25),
+        5: dt.date(2026, 9, 26),
+    }
+
+
+def test_header_reversed_order_is_not_trusted() -> None:
+    """순서가 뒤집힌 열은 해석값을 쓰지 않고 열 위치로 보정해 증가를 유지한다."""
+    cells = ["9월", "21일", "22일", "23일", "26일", "25일"]
+    dates = parse_header_dates(cells, dt.date(2026, 9, 21))
+    assert dates[4] == dt.date(2026, 9, 24)
+    assert dates[5] == dt.date(2026, 9, 25)
+
+
+def test_unfamiliar_timed_label_is_boundary_and_lunch_label() -> None:
+    """시간이 붙은 낯선 끼니 라벨은 경계이고, 점심/저녁은 끼니로 인식한다."""
+    assert _is_block_boundary("천원의 저녁밥 17:00~18:50")
+    assert not _is_block_boundary("8:30~ 10:00")
+    assert _meal_type("점심 11:00~14:00") == "lunch"
+    assert _meal_type("천원의 저녁밥 17:00~18:50") == "dinner"
+
+
+def test_second_breakfast_label_is_not_a_label() -> None:
+    """첫 조식 라벨 뒤의 '아침' 행은 라벨이 아니라 앞 조식 블록의 일부다."""
+    df = workbook()
+    df.iloc[3, 0] = "천원의 아침밥"
+    df.iloc[3, 2] = "A2"
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    tip = [
+        m
+        for m in parsed
+        if m.restaurant_id == TIP_RESTAURANT_ID and m.meal_type == "breakfast"
+    ]
+    assert len(tip) == 6
+    assert next(m for m in tip if m.date == dt.date(2026, 8, 25)).menu == ["A"]
