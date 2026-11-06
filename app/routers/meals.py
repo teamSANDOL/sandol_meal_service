@@ -550,7 +550,7 @@ async def download_uploaded_meal_excel(
 ) -> FileResponse:
     """관리자에게 보관된 원본 Excel 파일을 내려줍니다."""
     del current_user
-    record = upload_record(upload_id)
+    record = upload_record(upload_id) if upload_id.strip() else None
     if record is None:
         raise HTTPException(
             status_code=Config.HttpStatus.NOT_FOUND,

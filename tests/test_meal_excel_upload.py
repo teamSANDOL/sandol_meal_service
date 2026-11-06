@@ -285,12 +285,12 @@ async def test_download_finds_upload_id_with_surrounding_spaces(
 
 
 @pytest.mark.asyncio
-async def test_download_returns_404_when_original_file_is_missing(
+async def test_download_returns_404_when_upload_lacks_original_file(
     meal_upload_api: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A record without original.xlsx gives 404 instead of a 500."""
+    """An upload without original.xlsx is dropped from the list, so it is 404."""
     monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
     _write_upload_sidecar(tmp_path, "gone", "2026-09-21T08:00:00+09:00")
     next(tmp_path.rglob("original.xlsx")).unlink()
@@ -337,3 +337,18 @@ async def test_download_requires_user_id_header(
         response = await client.get("/meals/excel/uploads/secret/file")
     assert response.status_code == 401
     assert response.content != b"workbook"
+
+
+@pytest.mark.asyncio
+async def test_download_blank_id_returns_404_not_latest(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A whitespace-only id must not fall back to the latest upload."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "old", "2026-09-20T08:00:00+09:00")
+    _write_upload_sidecar(tmp_path, "new", "2026-09-21T08:00:00+09:00")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/%20/file")
+    assert response.status_code == 404
