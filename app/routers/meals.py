@@ -33,6 +33,7 @@ from typing import Annotated, Any, Optional
 
 from httpx import AsyncClient
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 from fastapi_pagination import Params, add_pagination, paginate
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,7 @@ from app.services.excel_upload_service import (
     ExcelMealImporter,
     sync_archived_upload,
     sync_lock,
+    upload_record,
     upload_records,
     upload_workbook,
     validate_xlsx_archive as _validate_xlsx_archive,
@@ -539,6 +541,33 @@ async def list_uploaded_meal_excels(
             "latest_upload_id": items[0].get("upload_id") if items else None,
         },
     }
+
+
+@router.get("/excel/uploads/{upload_id}/file")
+async def download_uploaded_meal_excel(
+    upload_id: str,
+    current_user: Annotated[AdminUserSchema, Depends(get_admin_user)],
+) -> FileResponse:
+    """관리자에게 보관된 원본 Excel 파일을 내려줍니다."""
+    del current_user
+    record = upload_record(upload_id) if upload_id.strip() else None
+    if record is None:
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="업로드 파일을 찾을 수 없습니다.",
+        )
+    result_path, result = record
+    original_path = result_path.with_name("original.xlsx")
+    if not original_path.is_file():
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="업로드 파일을 찾을 수 없습니다.",
+        )
+    return FileResponse(
+        original_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=safe_upload_filename(str(result.get("file_name") or "")),
+    )
 
 
 @router.post("/excel/sync")
