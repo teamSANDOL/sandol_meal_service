@@ -187,11 +187,10 @@ def test_header_explicit_month_conflict_rejected() -> None:
     assert parse_header_dates(cells, dt.date(2026, 8, 28)) == {}
 
 
-def test_meal_type_breakfast_label_is_narrow() -> None:
-    """Only real breakfast labels match; notes merely containing '아침' do not."""
+def test_meal_type_breakfast_labels() -> None:
+    """Breakfast labels match by '조식' prefix or '아침' anywhere."""
     for label in ("천원의 아침밥", "천원의아침밥(8:30~10:00)", "아침", "아침식사"):
         assert _meal_type(label) == "breakfast"
-    assert _meal_type("아침은 8시부터 운영") is None
 
 
 def test_is_block_boundary_time_rows() -> None:
@@ -216,3 +215,15 @@ def test_parenthesized_time_row_does_not_cut_breakfast_menu() -> None:
         and meal.date == dt.date(2026, 8, 25)
     )
     assert tip.menu == ["A", "A2"]
+
+
+def test_breakfast_note_below_dinner_is_not_a_label() -> None:
+    """A '아침...' note row after dinner adds no breakfast and ends dinner."""
+    df = workbook()
+    df.iloc[6, 0] = "아침은 8시부터 운영"
+    df.iloc[6, 1] = "note"
+    parsed = parse_weekly_menus(df, dt.date(2026, 8, 24))
+    tip = [m for m in parsed if m.restaurant_id == TIP_RESTAURANT_ID]
+    assert len([m for m in tip if m.meal_type == "breakfast"]) == 6
+    dinner = next(m for m in tip if m.meal_type == "dinner")
+    assert dinner.menu == ["TIP 저"]

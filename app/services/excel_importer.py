@@ -21,7 +21,6 @@ TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
 _MONTH_END_DAY = 28
 _TIME_RE = re.compile(r"\d{1,2}:\d{2}")
-_BREAKFAST_RE = re.compile(r"아침(밥|식사)?(?![가-힣])")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
 
@@ -54,11 +53,11 @@ def _cell_text(value: Any) -> str:
 def _meal_type(label: str) -> str | None:
     """Map a first-column label to a meal type, ignoring whitespace/newlines.
 
-    '조식'으로 시작하거나 '아침', '아침밥', '아침식사'가 단어로 쓰이면
-    (예: '천원의 아침밥') 조식이다. '아침은 8시부터'처럼 뒤에 한글이 붙으면 아니다.
+    '조식'으로 시작하거나 '아침'을 포함하면(예: '천원의 아침밥') 조식이다.
+    주석 행 오인은 호출부(_parse_block)가 위치로 걸러낸다.
     """
     compact = re.sub(r"\s+", "", label)
-    if compact.startswith("조식") or _BREAKFAST_RE.search(compact):
+    if compact.startswith("조식") or "아침" in compact:
         return "breakfast"
     if compact.startswith("중식"):
         return "lunch"
@@ -238,10 +237,18 @@ def _parse_block(
     if not dates:
         return None
 
+    # 조식 라벨은 첫 중식/석식 라벨 앞에서만 인정한다(아래 주석 행 오인 방지).
+    typed_rows = [
+        (row, _meal_type(_cell_text(df.iloc[row, 0])))
+        for row in range(header_row + 1, end)
+    ]
+    first_later_meal = next(
+        (row for row, kind in typed_rows if kind in ("lunch", "dinner")), end
+    )
     label_rows = [
         row
-        for row in range(header_row + 1, end)
-        if _meal_type(_cell_text(df.iloc[row, 0])) is not None
+        for row, kind in typed_rows
+        if kind is not None and (kind != "breakfast" or row < first_later_meal)
     ]
     if not label_rows:
         return None
