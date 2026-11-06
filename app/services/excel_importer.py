@@ -19,7 +19,9 @@ from app.utils.meals import upsert_meal
 EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
-MEAL_LABELS = ("조식", "중식", "석식")
+_MONTH_END_DAY = 28
+_TIME_ONLY_RE = re.compile(r"\d{1,2}:\d{2}|오전|오후|[()~\-:.]")
+_WEEKDAY_RE = re.compile(r"일\s*\(?\s*[월화수목금토일]")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
 
@@ -49,6 +51,34 @@ def _cell_text(value: Any) -> str:
     return str(value).strip()
 
 
+def _meal_type(label: str) -> str | None:
+    """Map a first-column label to a meal type, ignoring whitespace/newlines.
+
+    '조식'으로 시작하거나 '아침'을 포함하면(예: '천원의 아침밥') 조식이다.
+    주석 행 오인은 호출부(_parse_block)가 위치로 걸러낸다.
+    """
+    compact = re.sub(r"\s+", "", label)
+    if compact.startswith("조식") or "아침" in compact:
+        return "breakfast"
+    if compact.startswith("중식"):
+        return "lunch"
+    if compact.startswith("석식"):
+        return "dinner"
+    return None
+
+
+def _is_block_boundary(label: str) -> bool:
+    """Return True for a non-empty first cell that starts a new section.
+
+    끼니 라벨은 시간이 붙어 있어도('중식 11:30~13:30') 경계이고, 라벨 아래로
+    밀려난 시간 행('8:30~ 10:00', '(8:30~10:00)', '오전 8:30~10:00')은 아니다.
+    """
+    compact = re.sub(r"\s+", "", label)
+    if not compact:
+        return False
+    return _meal_type(label) is not None or bool(_TIME_ONLY_RE.sub("", compact))
+
+
 def clean_menu(menu_list: list[Any]) -> list[str]:
     """Remove empty and workbook decoration rows while preserving status text."""
     cleaned: list[str] = []
@@ -75,52 +105,101 @@ def _nearest_year(month: int, day: int, today: dt.date) -> int | None:
     return min(candidates, key=lambda value: abs(value - today)).year
 
 
-def _header_day(value: Any, expected: dt.date) -> bool:
-    """Check a day header against the date inferred from the first column."""
-    text = _cell_text(value)
-    if not text:
-        return False
-    slash_match = _SLASH_DATE_RE.search(text)
-    if slash_match:
-        return (
-            int(slash_match.group(1)) == expected.month
-            and int(slash_match.group(2)) == expected.day
-        )
-    day_match = re.search(r"(\d{1,2})\s*일", text)
-    return bool(day_match and int(day_match.group(1)) == expected.day)
+def _resolve_header_candidates(
+    cells: list[Any], header_month: int, today: dt.date
+) -> list[tuple[int, dt.date]]:
+    """Resolve each dated header cell to a date, tracking month/year rollover.
 
-
-def parse_header_dates(cells: list[Any], today: dt.date) -> dict[int, dt.date]:
-    """Convert a month/day header row into validated column dates."""
-    month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
-    if not month_match:
-        return {}
-    header_month = int(month_match.group(1))
-
-    first_column: int | None = None
-    anchor: dt.date | None = None
+    'M/D' 표기는 그 월을 우선하고, 말일 뒤에 일(日)이 줄면 다음 달로 본다.
+    시트 상단의 '8월'은 시작 월 힌트일 뿐이다. 해석 불가면 빈 리스트.
+    """
+    candidates: list[tuple[int, dt.date]] = []
+    month = header_month
+    year: int | None = None
+    prev_day: int | None = None
     for column, value in enumerate(cells[1:], start=1):
         text = _cell_text(value)
         day_match = re.search(r"(\d{1,2})\s*일", text)
         if not day_match:
             continue
+        day = int(day_match.group(1))
         slash_match = _SLASH_DATE_RE.search(text)
-        first_month = int(slash_match.group(1)) if slash_match else header_month
-        first_day = int(day_match.group(1))
-        first_year = _nearest_year(first_month, first_day, today)
-        if first_year is None:
-            return {}
-        first_column = column
-        anchor = dt.date(first_year, first_month, first_day)
-        break
-    if first_column is None or anchor is None:
+        if slash_match:
+            new_month = int(slash_match.group(1))
+        elif prev_day is not None and prev_day >= _MONTH_END_DAY and day < prev_day:
+            # 31 -> 1처럼 말일 뒤에 일(日)이 줄면 다음 달로 넘어간 것이다.
+            new_month = month % 12 + 1
+        else:
+            new_month = month
+        if year is None:
+            year = _nearest_year(new_month, day, today)
+            if year is None:
+                return []
+        elif new_month < month:
+            year += 1
+        month, prev_day = new_month, day
+        try:
+            candidates.append((column, dt.date(year, month, day)))
+        except ValueError:
+            return []
+    return candidates
+
+
+def parse_header_dates(
+    cells: list[Any], today: dt.date, block: str = ""
+) -> dict[int, dt.date]:
+    """Convert a month/day header row into column dates.
+
+    해석한 날짜를 왼쪽에서 오른쪽으로 그대로 쓰되, 빠진 열(빈 날)은 허용한다.
+    같은 날짜 중복 같은 오기는 양옆 날짜 사이의 하루일 때만 보정한다. 요일
+    표기(`5일(토)`)가 붙은 마지막 열의 오기는 첫 날짜부터 앞 열까지 하루씩
+    연속일 때만 `앞 열 + 1일`로 보정한다. 순서가 뒤집혔거나 보정할 수 없거나
+    한 주(6일)를 넘으면 빈 dict로 거부한다.
+    """
+    month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
+    if not month_match:
+        return {}
+    candidates = _resolve_header_candidates(cells, int(month_match.group(1)), today)
+    if not candidates:
         return {}
 
+    first = candidates[0][1]
+    last_has_weekday = bool(_WEEKDAY_RE.search(_cell_text(cells[candidates[-1][0]])))
     dates: dict[int, dt.date] = {}
-    for column, value in enumerate(cells[1:], start=1):
-        expected = anchor + dt.timedelta(days=column - first_column)
-        if _header_day(value, expected):
-            dates[column] = expected
+    previous: dt.date | None = None
+    for index, (column, resolved) in enumerate(candidates):
+        upcoming = candidates[index + 1][1] if index + 1 < len(candidates) else None
+        text = _cell_text(cells[column])
+        # 요일 표기 마지막 열의 오기는 앞 날짜가 하루씩 연속일 때만 허용한다.
+        next_is_last_typo = (
+            index + 2 == len(candidates)
+            and last_has_weekday
+            and resolved - first == dt.timedelta(days=index)
+        )
+        if upcoming is not None and resolved > upcoming and not next_is_last_typo:
+            logger.error("[엑셀 파싱] 헤더 순서 뒤집힘 거부 (%s): '%s'", block, text)
+            return {}
+        final = resolved
+        if previous is not None and resolved <= previous:
+            # 요일 표기는 달력과 어긋나는 양식이 있어 날짜 계산에 쓰지 않고,
+            # 마지막 열이 오기임을 알려 주는 표식으로만 쓴다.
+            is_last_with_weekday = (
+                upcoming is None
+                and bool(_WEEKDAY_RE.search(text))
+                and previous - first == dt.timedelta(days=index - 1)
+            )
+            is_gap_between = upcoming == previous + dt.timedelta(days=2)
+            if not (is_last_with_weekday or is_gap_between):
+                logger.error("[엑셀 파싱] 헤더 중복 거부 (%s): '%s'", block, text)
+                return {}
+            final = previous + dt.timedelta(days=1)
+            logger.warning(
+                "[엑셀 파싱] 헤더 날짜 보정 (%s): '%s' -> %s", block, text, final
+            )
+        dates[column] = previous = final
+    if previous - candidates[0][1] > dt.timedelta(days=6):
+        logger.error("[엑셀 파싱] 헤더가 한 주를 넘어 거부 (%s)", block)
+        return {}
     return dates
 
 
@@ -158,29 +237,44 @@ def _parse_block(
     )
     if header_row is None:
         return None
-    dates = parse_header_dates(df.iloc[header_row, :].tolist(), today)
+    dates = parse_header_dates(
+        df.iloc[header_row, :].tolist(), today, f"restaurant={restaurant_id}"
+    )
     if not dates:
         return None
 
-    label_rows = [
-        row
+    # 조식 라벨은 첫 중식/석식 라벨 앞의 첫 번째 것만 인정한다(주석 행 오인 방지).
+    typed_rows = [
+        (row, _meal_type(_cell_text(df.iloc[row, 0])))
         for row in range(header_row + 1, end)
-        if any(_cell_text(df.iloc[row, 0]).startswith(label) for label in MEAL_LABELS)
     ]
-    if not label_rows:
+    first_later_meal = next(
+        (row for row, kind in typed_rows if kind in ("lunch", "dinner")), end
+    )
+    first_breakfast = next(
+        (row for row, kind in typed_rows if kind == "breakfast"), end
+    )
+    labels = [
+        (row, kind)
+        for row, kind in typed_rows
+        if kind is not None
+        and (kind != "breakfast" or (row == first_breakfast < first_later_meal))
+    ]
+    kinds = [kind for _, kind in labels]
+    if not labels or len(set(kinds)) != len(kinds):
+        # 같은 끼니 라벨이 두 번이면 뒤의 것이 앞의 것을 덮어쓰므로 거부한다.
         return None
 
     parsed: list[ParsedMeal] = []
-    for label_row in label_rows:
-        label_text = _cell_text(df.iloc[label_row, 0])
-        meal_label = next(
-            label for label in MEAL_LABELS if label_text.startswith(label)
-        )
+    for label_row, meal_type in labels:
         next_label_or_boundary = next(
-            (row for row in range(label_row + 1, end) if _cell_text(df.iloc[row, 0])),
+            (
+                row
+                for row in range(label_row + 1, end)
+                if _is_block_boundary(_cell_text(df.iloc[row, 0]))
+            ),
             end,
         )
-        meal_type = {"조식": "breakfast", "중식": "lunch", "석식": "dinner"}[meal_label]
         for column, meal_date in dates.items():
             menu = clean_menu(
                 df.iloc[label_row:next_label_or_boundary, column].tolist()
