@@ -151,8 +151,10 @@ def parse_header_dates(
     """Convert a month/day header row into column dates.
 
     해석한 날짜를 왼쪽에서 오른쪽으로 그대로 쓰되, 빠진 열(빈 날)은 허용한다.
-    같은 날짜 중복 같은 오기는 양옆 날짜 사이의 하루일 때만 보정하고,
-    순서가 뒤집혔거나 보정할 수 없거나 한 주(6일)를 넘으면 빈 dict로 거부한다.
+    같은 날짜 중복 같은 오기는 양옆 날짜 사이의 하루일 때만 보정한다. 요일
+    표기(`5일(토)`)가 붙은 마지막 열의 오기는 첫 날짜부터 앞 열까지 하루씩
+    연속일 때만 `앞 열 + 1일`로 보정한다. 순서가 뒤집혔거나 보정할 수 없거나
+    한 주(6일)를 넘으면 빈 dict로 거부한다.
     """
     month_match = _MONTH_RE.match(_cell_text(cells[0])) if cells else None
     if not month_match:
@@ -161,13 +163,18 @@ def parse_header_dates(
     if not candidates:
         return {}
 
+    first = candidates[0][1]
+    last_has_weekday = bool(_WEEKDAY_RE.search(_cell_text(cells[candidates[-1][0]])))
     dates: dict[int, dt.date] = {}
     previous: dt.date | None = None
     for index, (column, resolved) in enumerate(candidates):
         upcoming = candidates[index + 1][1] if index + 1 < len(candidates) else None
         text = _cell_text(cells[column])
-        next_is_last_typo = index + 2 == len(candidates) and bool(
-            _WEEKDAY_RE.search(_cell_text(cells[candidates[-1][0]]))
+        # 요일 표기 마지막 열의 오기는 앞 날짜가 하루씩 연속일 때만 허용한다.
+        next_is_last_typo = (
+            index + 2 == len(candidates)
+            and last_has_weekday
+            and resolved - first == dt.timedelta(days=index)
         )
         if upcoming is not None and resolved > upcoming and not next_is_last_typo:
             logger.error("[엑셀 파싱] 헤더 순서 뒤집힘 거부 (%s): '%s'", block, text)
@@ -176,7 +183,11 @@ def parse_header_dates(
         if previous is not None and resolved <= previous:
             # 요일 표기는 달력과 어긋나는 양식이 있어 날짜 계산에 쓰지 않고,
             # 마지막 열이 오기임을 알려 주는 표식으로만 쓴다.
-            is_last_with_weekday = upcoming is None and bool(_WEEKDAY_RE.search(text))
+            is_last_with_weekday = (
+                upcoming is None
+                and bool(_WEEKDAY_RE.search(text))
+                and previous - first == dt.timedelta(days=index - 1)
+            )
             is_gap_between = upcoming == previous + dt.timedelta(days=2)
             if not (is_last_with_weekday or is_gap_between):
                 logger.error("[엑셀 파싱] 헤더 중복 거부 (%s): '%s'", block, text)

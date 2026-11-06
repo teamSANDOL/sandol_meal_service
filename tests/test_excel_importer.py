@@ -284,6 +284,7 @@ def test_second_breakfast_label_is_not_a_label() -> None:
 
 
 def _d(*pairs: tuple[int, int, int]) -> list[dt.date]:
+    """Build a date list from (year, month, day) tuples."""
     return [dt.date(*pair) for pair in pairs]
 
 
@@ -364,6 +365,9 @@ HEADER_CASES = [
         _d((2026, 9, 21), (2026, 9, 22), (2026, 9, 23), (2026, 9, 24)),
     ),
     ("9월", ["23일", "25일", "25일"], _W, None),
+    ("9월", ["23일", "26일", "25일(토)"], _W, None),
+    ("9월", ["21일", "23일", "22일(토)"], _W, None),
+    ("9월", ["21일", "22일", "24일", "25일", "23일(토)"], _W, None),
     (
         "9월",
         ["24일", "25일", "26일", "26일", "28일", "29일"],
@@ -468,4 +472,16 @@ def test_mismatched_restaurant_dates_reject_workbook() -> None:
     """TIP과 E동의 날짜 집합이 다르면 파일 전체를 거부한다."""
     df = workbook()
     df.iloc[8, 6] = "30일"
+    assert parse_weekly_menus(df, dt.date(2026, 8, 24)) == []
+
+
+def test_missing_friday_is_corrected_alone_but_rejected_by_date_mismatch() -> None:
+    """단일 블록에선 25로 보정되지만 E동 헤더와 불일치하면 파일 거부."""
+    cells = ["9월", "21일", "22일", "23일", "24일", "22일(토)"]
+    dates = parse_header_dates(cells, dt.date(2026, 9, 21))
+    assert dates[5] == dt.date(2026, 9, 25)
+
+    df = workbook()
+    df.iloc[1, 1:5] = ["24일", "25일", "26일", "27일"]
+    df.iloc[1, 5:7] = ["25일(토)", ""]
     assert parse_weekly_menus(df, dt.date(2026, 8, 24)) == []
