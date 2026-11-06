@@ -267,3 +267,73 @@ async def test_download_rejects_non_admin(
         )
     assert response.status_code == 403
     assert response.content != b"workbook"
+
+
+@pytest.mark.asyncio
+async def test_download_finds_upload_id_with_surrounding_spaces(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Whitespace around the id is stripped like the sync selection rule."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "abc", "2026-09-21T08:00:00+09:00")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/%20abc%20/file")
+    assert response.status_code == 200
+    assert response.content == b"workbook"
+
+
+@pytest.mark.asyncio
+async def test_download_returns_404_when_original_file_is_missing(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A record without original.xlsx gives 404 instead of a 500."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "gone", "2026-09-21T08:00:00+09:00")
+    next(tmp_path.rglob("original.xlsx")).unlink()
+
+    response = await meal_upload_api.get("/meals/excel/uploads/gone/file")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_encodes_korean_filename_in_content_disposition(
+    meal_upload_api: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Non-ASCII file names use RFC 5987 percent-encoding."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "식단표", "2026-09-21T08:00:00+09:00")
+
+    response = await meal_upload_api.get("/meals/excel/uploads/식단표/file")
+    disposition = response.headers["content-disposition"]
+    assert "filename*=utf-8''" in disposition
+    assert "%EC%8B%9D%EB%8B%A8%ED%91%9C.xlsx" in disposition
+
+
+@pytest.mark.asyncio
+async def test_download_requires_user_id_header(
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Without X-User-ID the real dependency answers 401."""
+    monkeypatch.setattr(meals_router.Config, "MEAL_UPLOAD_ARCHIVE_DIR", tmp_path)
+    _write_upload_sidecar(tmp_path, "secret", "2026-09-21T08:00:00+09:00")
+
+    async def override_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db
+
+    app = FastAPI()
+    app.include_router(meals_router.router)
+    app.dependency_overrides[get_db] = override_db
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get("/meals/excel/uploads/secret/file")
+    assert response.status_code == 401
+    assert response.content != b"workbook"

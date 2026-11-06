@@ -62,6 +62,7 @@ from app.services.excel_upload_service import (
     ExcelMealImporter,
     sync_archived_upload,
     sync_lock,
+    upload_record,
     upload_records,
     upload_workbook,
     validate_xlsx_archive as _validate_xlsx_archive,
@@ -549,18 +550,21 @@ async def download_uploaded_meal_excel(
 ) -> FileResponse:
     """관리자에게 보관된 원본 Excel 파일을 내려줍니다."""
     del current_user
-    record = next(
-        (item for item in upload_records() if item[1].get("upload_id") == upload_id),
-        None,
-    )
+    record = upload_record(upload_id)
     if record is None:
         raise HTTPException(
             status_code=Config.HttpStatus.NOT_FOUND,
             detail="업로드 파일을 찾을 수 없습니다.",
         )
     result_path, result = record
+    original_path = result_path.with_name("original.xlsx")
+    if not original_path.is_file():
+        raise HTTPException(
+            status_code=Config.HttpStatus.NOT_FOUND,
+            detail="업로드 파일을 찾을 수 없습니다.",
+        )
     return FileResponse(
-        result_path.with_name("original.xlsx"),
+        original_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=safe_upload_filename(str(result.get("file_name") or "")),
     )
