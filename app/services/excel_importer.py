@@ -20,7 +20,9 @@ EXCEL_PATH = os.path.join(Config.TMP_DIR, "data.xlsx")
 TIP_RESTAURANT_ID = int(Config.TIP_RESTAURANT_ID)
 E_RESTAURANT_ID = int(Config.E_RESTAURANT_ID)
 _MONTH_END_DAY = 28
-_TIME_ONLY_RE = re.compile(r"\d{1,2}:\d{2}|오전|오후|[()~\-:.]")
+_TIME_ONLY_RE = re.compile(
+    r"\d{1,2}:\d{2}|오전|오후|[()~\uff5e\u223c\u301c\u2013\u2014\-:.]"
+)
 _WEEKDAY_RE = re.compile(r"일\s*\(?\s*[월화수목금토일]")
 _MONTH_RE = re.compile(r"^\s*(\d{1,2})월\s*$")
 _SLASH_DATE_RE = re.compile(r"(\d{1,2})\s*/\s*(\d{1,2})")
@@ -55,15 +57,18 @@ def _meal_type(label: str) -> str | None:
     """Map a first-column label to a meal type, ignoring whitespace/newlines.
 
     '조식'으로 시작하거나 '아침'을 포함하면(예: '천원의 아침밥') 조식이다.
+    단 '중식'·'석식'으로 시작하면('중식(아침 대체)') '아침'이 있어도 조식이 아니다.
     주석 행 오인은 호출부(_parse_block)가 위치로 걸러낸다.
     """
     compact = re.sub(r"\s+", "", label)
-    if compact.startswith("조식") or "아침" in compact:
+    if compact.startswith("조식"):
         return "breakfast"
     if compact.startswith("중식"):
         return "lunch"
     if compact.startswith("석식"):
         return "dinner"
+    if "아침" in compact:
+        return "breakfast"
     return None
 
 

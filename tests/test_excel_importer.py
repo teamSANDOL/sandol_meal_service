@@ -194,9 +194,26 @@ def test_meal_type_breakfast_labels() -> None:
         assert _meal_type(label) == "breakfast"
 
 
+def test_meal_type_lunch_dinner_label_with_morning_word() -> None:
+    """'중식(아침 대체)'처럼 중식·석식으로 시작하면 조식이 아니다."""
+    assert _meal_type("중식(아침 대체)") == "lunch"
+    assert _meal_type("석 식\n(아침 겸용)") == "dinner"
+    assert _meal_type("조식(아침)") == "breakfast"
+
+
 def test_is_block_boundary_time_rows() -> None:
     """Time rows are not boundaries, but meal labels with times and notes are."""
-    for label in ("8:30~10:00", "(8:30~10:00)", "오전 8:30~10:00", ""):
+    for label in (
+        "8:30~10:00",
+        "(8:30~10:00)",
+        "오전 8:30~10:00",
+        "8:30\uff5e10:00",
+        "8:30\u223c10:00",
+        "8:30\u301c10:00",
+        "8:30\u201310:00",
+        "8:30\u201410:00",
+        "",
+    ):
         assert not _is_block_boundary(label)
     for label in ("중식 11:30~13:30", "중식", "**상기 식단은"):
         assert _is_block_boundary(label)
