@@ -11,15 +11,21 @@ import shutil
 from app.config import Config, logger
 from app.database import AsyncSessionLocal
 from app.services.excel_importer import EXCEL_PATH, ExcelMealImporter, ParsedMeal
-from app.services.ibook_downloader import BookDownloader
+from app.services.ibook_downloader import (
+    BookDownloader,
+    RemoteAccessBlockedError,
+    UnsupportedFileTypeError,
+)
 
 ARCHIVE_DIR = os.path.join(Config.TMP_DIR, "archive")
 _last_file_hash: str | None = None
 _last_parsed_week_monday: dt.date | None = None
 _last_synced_week_monday: dt.date | None = None
 _last_checked_at: dt.datetime | None = None
+_skip_until: dt.datetime | None = None
 _sync_lock = asyncio.Lock()
 _WATCH_INTERVAL = dt.timedelta(hours=6)
+_UNSUPPORTED_SKIP = dt.timedelta(hours=6)
 _SUNDAY = 7
 
 
@@ -68,21 +74,34 @@ async def download_and_save_excel_to_db(
     """Download, parse, and synchronize the workbook under one process lock."""
     global _last_file_hash, _last_parsed_week_monday  # noqa: PLW0603
     global _last_synced_week_monday, _last_checked_at  # noqa: PLW0603
+    global _skip_until  # noqa: PLW0603
 
     async with _sync_lock:
         now = dt.datetime.now(tz=Config.TZ)
         target = target_week_monday(now.date())
         watching = _last_synced_week_monday == target
-        if (
-            not force
-            and watching
+        skipping = _skip_until is not None and now < _skip_until
+        recently_checked = (
+            watching
             and _last_checked_at is not None
             and now - _last_checked_at < _WATCH_INTERVAL
-        ):
+        )
+        if not force and (skipping or recently_checked):
             return []
 
         active_downloader = downloader or BookDownloader()
-        await active_downloader.get_file(EXCEL_PATH)
+        try:
+            await active_downloader.get_file(EXCEL_PATH)
+        except RemoteAccessBlockedError as error:
+            logger.warning(
+                "[meal_excel_sync] 학교 서버 접근 불가로 건너뜁니다: %s", error
+            )
+            return []
+        except UnsupportedFileTypeError as error:
+            # 현재 식단 원본은 PDF라 파싱하지 않는다. 6시간 동안 목록을 다시 조회하지 않는다.
+            _skip_until = now + _UNSUPPORTED_SKIP
+            logger.warning("[meal_excel_sync] %s (6시간 동안 건너뜀)", error)
+            return []
         current_hash = _file_hash(EXCEL_PATH)
 
         if not force and current_hash == _last_file_hash:
