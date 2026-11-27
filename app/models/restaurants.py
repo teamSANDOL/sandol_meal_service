@@ -33,6 +33,10 @@ class User(Protocol):
 _service_state: dict[str, int | None] = {"user_id": None}
 DELETED_RESTAURANT_NAME_PREFIX = "[삭제됨] "
 
+class ServiceAccountNotReadyError(RuntimeError):
+    """Service Account 동기화가 아직 끝나지 않았음을 나타냅니다(HTTP 503)."""
+
+
 def set_service_user_id(user_id: int):
     """Service Account의 User.id를 설정합니다."""
     _service_state["user_id"] = user_id
@@ -41,7 +45,7 @@ def get_service_user_id() -> int:
     """Service Account의 User.id를 반환합니다."""
     service_user_id = _service_state["user_id"]
     if service_user_id is None:
-        raise RuntimeError("Service User ID가 설정되지 않았습니다.")
+        raise ServiceAccountNotReadyError("Service User ID가 설정되지 않았습니다.")
     return service_user_id
 
 

@@ -1,7 +1,10 @@
 """DB의 meal_type 테이블을 meal_types.json과 동기화"""
 
-import traceback
+import asyncio
 import json
+import time
+import traceback
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from sqlalchemy import update, select, text
@@ -14,6 +17,16 @@ from app.models.user import User
 from app.config import Config, logger
 from app.services.user_service import keycloak_user_exists_by_id
 from app.utils.restaurants import validate_establishment_type_price
+
+
+#: 기동 시 Keycloak 확인 재시도: 지수 backoff, 총 시간 상한(초).
+STARTUP_RETRY_INITIAL_DELAY = 1.0
+STARTUP_RETRY_TOTAL_LIMIT = 20.0
+#: 상한을 넘겨 백그라운드로 넘어간 뒤의 재시도 간격 상한(초).
+BACKGROUND_RETRY_MAX_DELAY = 60.0
+
+#: /health 가 보고하는 준비 상태. 서비스 계정 동기화 완료 여부.
+readiness: dict[str, bool] = {"service_account": False}
 
 
 async def sync_meal_types():
@@ -101,6 +114,55 @@ async def ensure_service_account_in_db() -> None:
             await db.rollback()
             logger.error("service_account DB 생성 중 오류 발생", exc_info=e)
             raise
+
+
+async def ensure_service_account_resilient(
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> bool:
+    """서비스 계정 동기화를 짧게 재시도하고, 끝내 실패하면 False를 반환합니다.
+
+    SERVICE_ACCOUNT_SUB 미설정은 설정 오류이므로 기존처럼 즉시 예외를 냅니다.
+    Keycloak 일시 장애(및 그 외 실패)만 재시도 대상이며 기동을 막지 않습니다.
+    """
+    if not Config.SERVICE_ACCOUNT_SUB:
+        raise RuntimeError("Config.SERVICE_ACCOUNT_SUB가 설정되지 않았습니다.")
+
+    deadline = time.monotonic() + STARTUP_RETRY_TOTAL_LIMIT
+    delay = STARTUP_RETRY_INITIAL_DELAY
+    while True:
+        try:
+            await ensure_service_account_in_db()
+        except Exception as exc:  # noqa: BLE001 - 어떤 실패든 기동은 막지 않는다
+            logger.warning("service_account 확인 실패, 재시도 예정: %s", exc)
+        else:
+            readiness["service_account"] = True
+            return True
+        if time.monotonic() + delay > deadline:
+            return False
+        await sleep(delay)
+        delay *= 2
+
+
+async def complete_deferred_startup(
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """기동 시 실패한 서비스 계정 동기화를 성공할 때까지 백그라운드에서 재시도합니다.
+
+    성공하면 서비스 계정에 의존하는 Restaurant 동기화까지 마칩니다.
+    """
+    delay = STARTUP_RETRY_INITIAL_DELAY * 2
+    while True:
+        await sleep(delay)
+        delay = min(delay * 2, BACKGROUND_RETRY_MAX_DELAY)
+        try:
+            await ensure_service_account_in_db()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("service_account 백그라운드 재시도 실패: %s", exc)
+            continue
+        readiness["service_account"] = True
+        logger.info("service_account 동기화 완료(지연). Restaurant 동기화 진행")
+        await sync_restaurants()
+        return
 
 
 async def sync_restaurants():
